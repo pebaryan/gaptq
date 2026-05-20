@@ -1,80 +1,64 @@
-# GAP-TQ: Geometric Algebra Post-Training Quantization
+# GAP-TQ
 
-A research experiment exploring whether **geometric algebra rotors** can improve post-training quantization of neural networks, inspired by [QuaRot](https://github.com/spcl/QuaRot).
+GAP-TQ is a research sandbox for one idea: learn an orthogonal preconditioner, parameterized as a geometric-algebra rotor, before post-training quantization.
 
-## Core Idea
+The useful part of the project is the learned rotation. The geometric-algebra notation is a parameterization and analysis tool, not the goal by itself.
 
-**QuaRot** applies random orthogonal rotations (via Hadamard matrices) to weight matrices before quantization, making weight distributions more uniform and reducing quantization error.
+For the research framing, see [docs/research_roadmap.md](docs/research_roadmap.md).
+For the literature review, see [docs/literature_review.md](docs/literature_review.md).
 
-**GAP-TQ** replaces the fixed Hadamard rotations with **learnable rotors** from geometric algebra (Clifford algebra). Rotors naturally represent rotations and are parameterized by **differentiable angles** that can be optimized to **minimize quantization error** on calibration data.
+## What the core path does
 
-### Key Advantages Over Hadamard
+- Load GPT-2 or GPT-2-medium
+- Measure an FP16 baseline
+- Quantize weights with RTN
+- Quantize weights with a learned block-diagonal rotor
+- Optionally test QuaRot-style absorption as a comparison point
 
-| Feature | Hadamard (QuaRot) | Rotors (GAP-TQ) |
-|---------|-------------------|-----------------|
-| Parameterization | Fixed matrix | Differentiable angles |
-| Optimization | Not possible | Gradient-based optimization |
-| Block structure | Power-of-2 blocks | Arbitrary 2D planes |
+## What lives in the repo
 
-## Project Structure
-
-```
-gaptq/
-├── __init__.py          # Package exports
-├── ga.py                # Geometric algebra primitives
-│   ├── MultiVector      # Multivector in Cl(n,0)
-│   ├── rotor_from_angle # Create rotor for 2D plane
-│   ├── apply_rotor_to_vector  # R * v * R†
-│   ├── rotor_matrix_2d  # 2x2 rotation matrix from rotor
-│   ├── block_diag_rotor_matrix  # Compose rotors into block-diagonal matrix
-│   └── RandomRotorTransform  # Trainable rotor transform
-├── quantization.py      # Quantization utilities
-│   ├── UniformQuantizer # Configurable uniform quantizer
-│   ├── quantize         # Convenience function
-│   ├── quantization_error  # NMSE computation
-│   └── quantize_weight_matrix  # Rotated quantization
-├── rotor_quant.py       # Rotor-based QuaRot implementation
-│   ├── optimize_rotor_angles  # Gradient-based optimization
-│   ├── RotorQuaRot      # Quantization module with learnable rotors
-│   └── quantize_with_rotors  # One-shot quantization
-└── experiment.py        # Comparison experiment
-    ├── run_quantization_experiment  # Single matrix comparison
-    ├── run_batch_experiment  # Multi-matrix aggregation
-    └── summarize_results  # Print summary statistics
-
-tests/
-└── test_ga.py           # 20 tests for GA primitives
-```
+- [`gaptq/ga.py`](gaptq/ga.py): rotor and geometric algebra primitives
+- [`gaptq/quantization.py`](gaptq/quantization.py): uniform quantization helpers
+- [`gaptq/rotor_quant.py`](gaptq/rotor_quant.py): learned rotation + quantization
+- [`gaptq/quantize_model.py`](gaptq/quantize_model.py): GPT-2 benchmark runner
+- [`gaptq/experiment.py`](gaptq/experiment.py): small matrix-level experiments
+- [`gaptq/experimental/`](gaptq/experimental/): side branches that are not part of the core benchmark story
 
 ## Quick Start
 
 ```bash
-pip install torch numpy matplotlib scipy pytest
-
-# Run tests
-python -m pytest tests/ -v
-
-# Run experiment
-python -m gaptq.experiment
+pip install -r requirements.txt
+python -m pytest tests -v
+python -m gaptq.quantize_model --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1
 ```
 
-## Methods Compared
+## Current interpretation
 
-1. **RTN** (Round-to-Nearest): Direct quantization, no rotation
-2. **Orthogonal**: Random orthogonal matrix (QuaRot-style Hadamard or QR fallback)
-3. **Random Rotors**: Random rotor-based block-diagonal rotation
-4. **Optimized Rotors**: Gradient-optimized rotor angles
-5. **Best-of-N Random**: Best of N random rotor configurations
+The repo currently supports a narrow claim:
 
-## Dependencies
+- learned orthogonal preconditioning can reduce layer-wise quantization error
+- whether that translates to lower perplexity depends on the layer and the model
 
-- Python 3.8+
-- PyTorch 2.0+
-- NumPy
-- Matplotlib (optional, for plots)
-- SciPy (optional)
+The experimental branches in `gaptq/experimental/` are exploratory and should be treated separately from the main PTQ path.
 
-## References
+## Benchmark Snapshot
 
-- [QuaRot: Outlier-Free 4-Bit Inference in Rotated LLMs](https://arxiv.org/abs/2404.00456)
-- [Geometric Algebra for Physicists](https://www.cambridge.org/core/books/geometric-algebra-for-physicists/) - Doran & Lasenby
+Stable GPT-2 benchmark settings used for the core path:
+
+```bash
+python -m gaptq.quantize_model --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+Results from the cleaned core benchmark:
+
+| Model | FP16 PPL | RTN PPL | Learned Rotor PPL | Mean NMSE Gain vs RTN | Layers Improved |
+|---|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 87.56 | 4.6% | 46/48 |
+| `gpt2-medium` | 44.17 | 55.19 | 55.16 | 4.4% | 89/96 |
+
+## Limitations
+
+- NMSE improvements do not reliably translate into perplexity improvements.
+- The experimental branches are not part of the core claim and should not be read as validated methods.
+- Activation quantization, per-grade quantization, and ensemble quantization remain exploratory.

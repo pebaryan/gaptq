@@ -1,20 +1,13 @@
-"""
-Quantize a real GPT-2 model using rotor-based post-training quantization.
+"""Benchmark GPT-2 post-training quantization with learned rotations.
 
-Compares multiple methods on each linear layer:
-  - RTN (Round-to-Nearest): direct weight quantization
-  - Optimized Block-Diagonal Rotor: learn block-diagonal rotation to
-    minimize quantization error, then quantize the rotated weights.
-    Uses 2D rotor blocks (cos/sin) which support gradients at any dim.
-  - QuaRot-style absorption (--absorb): learn rotation R for c_attn, apply
-    the SAME R to c_attn AND c_proj, so R partially cancels through the
-    attention sub-block (matching QuaRot's consistent rotation approach).
+The core path compares:
+  - FP16 baseline
+  - RTN (round-to-nearest) weight quantization
+  - learned block-diagonal rotor quantization
+  - optional QuaRot-style absorption of the learned rotation
 
-NOTE: Full bivector-exp rotor (torch.matrix_exp) is only used for dim<=64
-      due to CUDA gradient limitations for large matrices.
-
-Handles HuggingFace GPT-2's Conv1D layers (used in attention and MLP).
-Evaluates perplexity on WikiText-2 validation set for all approaches.
+Experimental branches such as activation quantization, per-grade quantization,
+and ensemble quantization are available only behind ``--experimental``.
 """
 
 import argparse
@@ -26,9 +19,97 @@ from typing import Dict, List, Optional, Tuple
 import torch
 import torch.nn.functional as F
 
-from .quantization import UniformQuantizer, quantization_error, quantize_weight_matrix
+from .quantization import UniformQuantizer, quantization_error
 from .rotor_quant import get_optimal_rotation
 from .ga import bivector_exp
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Activation Quantization via Forward Hooks
+# ═══════════════════════════════════════════════════════════════════════
+
+class ActivationQuantizer:
+    """Adds forward pre-hooks to quantize activations at each linear/Conv1D layer.
+
+    When weights have been rotated (W' = W @ R^T), the forward pass becomes:
+        y = x @ W'^T = x @ R @ W^T
+    The activation entering the matmul is implicitly x @ R (rotated).
+    Quantizing this rotated activation reduces quantization error because
+    the rotation makes the activation distribution more uniform.
+
+    For evaluation with quantized activations:
+        y ≈ Q_act(x @ R) @ Q_W(W'^T)
+
+    Usage:
+        quantizer = ActivationQuantizer(n_bits=4)
+        quantizer.register(model, layers)
+        ppl = evaluate_perplexity(model, tokenizer, ...)
+        quantizer.remove()
+    """
+
+    def __init__(self, n_bits: int = 4, symmetric: bool = True):
+        self.n_bits = n_bits
+        self.symmetric = symmetric
+        self.handles: List[torch.utils.hooks.RemovableHandle] = []
+        # Activations use per-tensor quantization (dynamic, per-batch)
+        self.quantizer = UniformQuantizer(n_bits, symmetric, per_channel=False)
+        self.layer_count = 0
+
+    def _make_hook(self, layer_name: str):
+        """Create a forward pre-hook that quantizes the input tensor."""
+        quantizer_sym = UniformQuantizer(self.n_bits, symmetric=self.symmetric, per_channel=False)
+
+        def hook(module, input):
+            x = input[0]
+            if x.numel() > 1:
+                x_q = quantizer_sym(x)
+                return (x_q,) + input[1:]
+            return input
+
+        return hook
+
+    def register(self, model: torch.nn.Module,
+                 layers: List[Tuple[str, torch.nn.Module, str]]) -> None:
+        """Register activation quantization hooks on all specified layers.
+
+        Args:
+            model: The model to quantize activations for.
+            layers: List of (name, module, layer_type) tuples from get_linear_layers.
+        """
+        self.remove()  # Clear any existing hooks
+        for name, module, ltype in layers:
+            handle = module.register_forward_pre_hook(self._make_hook(name))
+            self.handles.append(handle)
+            self.layer_count += 1
+
+    def register_on_names(self, model: torch.nn.Module,
+                          named_modules: List[Tuple[str, torch.nn.Module]]) -> None:
+        """Register hooks on modules by (name, module) pairs.
+
+        Args:
+            model: The model (unused, kept for API consistency).
+            named_modules: List of (name, module) tuples.
+        """
+        self.remove()
+        for name, module in named_modules:
+            handle = module.register_forward_pre_hook(self._make_hook(name))
+            self.handles.append(handle)
+            self.layer_count += 1
+
+    def remove(self) -> None:
+        """Remove all registered hooks."""
+        for handle in self.handles:
+            handle.remove()
+        self.handles = []
+        self.layer_count = 0
+
+    def __repr__(self) -> str:
+        return f"ActivationQuantizer({self.n_bits}b, {self.layer_count} layers)"
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Layer Utilities
+# ═══════════════════════════════════════════════════════════════════════
 
 
 def _is_conv1d(module: torch.nn.Module) -> bool:
@@ -89,6 +170,11 @@ def set_weight(module: torch.nn.Module, layer_type: str, W: torch.Tensor) -> Non
         module.weight.data = W.T.to(module.weight.dtype)
     else:
         module.weight.data = W.to(module.weight.dtype)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Quantization Functions
+# ═══════════════════════════════════════════════════════════════════════
 
 
 def quantize_weight_rtn(
@@ -281,6 +367,11 @@ def replace_linear_weights_with_absorption(
     applies it to BOTH c_attn and c_proj. This makes R partially cancel
     through the attention path (consistent with QuaRot philosophy).
 
+    When combined with activation quantization (--quantize-activations),
+    the activations entering each layer are also quantized. The rotor
+    absorption means activations are implicitly rotated (x @ R), making
+    them more uniform for quantization.
+
     MLP layers are quantized independently (different dimensions).
 
     Args:
@@ -449,7 +540,7 @@ def replace_linear_weights_with_absorption(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-#  Original replace_linear_weights (independent per-layer)
+#  Generic replace_linear_weights (independent per-layer)
 # ═══════════════════════════════════════════════════════════════════════
 
 def replace_linear_weights(
@@ -503,6 +594,19 @@ def replace_linear_weights(
                 m = mode[:5]  # 'full_' or 'block'
                 print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> Rotor={info['nmse_rotor']:.6f} "
                       f"({impr:+.1f}%) [{m}] in {t:.1f}s")
+            elif mode.startswith("per_grade"):
+                impr = info.get("improvement_pct", 0)
+                b0 = info.get("bit_map", {}).get("0", "?")
+                b2 = info.get("bit_map", {}).get("2", "?")
+                bs = info.get("bit_map", {}).get("strain", "?")
+                ns = info.get("nmse_scalar", 0)
+                nb = info.get("nmse_bivector", 0)
+                nst = info.get("nmse_strain", 0)
+                fs = info.get("frac_scalar", 0)
+                fb = info.get("frac_bivector", 0)
+                fst = info.get("frac_strain", 0)
+                print(f"         PG({b0}/{b2}/{bs}) NMSE: S={ns:.2e}({fs:.0%}) B={nb:.2e}({fb:.0%}) St={nst:.2e}({fst:.0%})")
+                print(f"         Combined={info.get('nmse_rotor', 0):.6f} ({impr:+.1f}% vs RTN) in {t:.1f}s")
             elif mode == "rtn_fallback":
                 err_str = info.get("error", "")
                 print(f"         RTN (fallback): {err_str} in {t:.1f}s")
@@ -640,10 +744,38 @@ def main():
                              "to c_attn and c_proj in each attention sub-block")
     parser.add_argument("--quantize-lm-head", action="store_true",
                         help="Also quantize lm_head (usually skipped)")
+    parser.add_argument("--experimental", action="store_true",
+                        help="Enable experimental branches such as activation "
+                             "quantization, per-grade quantization, and ensemble PTQ")
+    parser.add_argument("--per-grade", action="store_true",
+                        help="Experimental: use per-grade quantization")
+    parser.add_argument("--bit-map", type=str, default=None,
+                        help="Bit map for per-grade quantization: e.g. '0:8,2:3,strain:6'")
+    parser.add_argument("--quantize-activations", action="store_true",
+                        help="Experimental: also quantize activations using forward hooks")
+    parser.add_argument("--ensemble", action="store_true",
+                        help="Experimental: rotation-aware ensemble quantization")
+    parser.add_argument("--submodel-size", type=int, default=2,
+                        help="Number of blocks per sub-model for ensemble quantization")
+    parser.add_argument("--calibration-batches", type=int, default=4,
+                        help="Number of calibration batches for ensemble quantization")
+    parser.add_argument("--calibration-batch-size", type=int, default=2,
+                        help="Batch size for calibration data generation")
     args = parser.parse_args()
 
+    experimental_requested = args.per_grade or args.quantize_activations or args.ensemble
+    if experimental_requested and not args.experimental:
+        parser.error("--per-grade, --quantize-activations, and --ensemble require --experimental")
+
     print("=" * 70)
-    mode_str = "QuaRot-style Absorption" if args.absorb else "Independent Rotor"
+    if args.experimental and args.per_grade:
+        mode_str = "Per-Grade Quantization"
+    elif args.absorb:
+        mode_str = "QuaRot-style Absorption"
+    else:
+        mode_str = "Independent Rotor"
+    if args.experimental and args.quantize_activations:
+        mode_str += " + Activation Quantization"
     print(f"GPT-2 Rotor-Based Quantization  [{mode_str}]")
     print(f"Model: {args.model}, {args.n_bits}-bit, {args.n_steps} steps/layer")
     print("=" * 70)
@@ -685,32 +817,46 @@ def main():
     # ── RTN Baseline ──────────────────────────────────────────────────
     if not args.skip_rtn:
         print(f"\n{'─'*50}")
-        print(f"2. RTN Quantization ({args.n_bits}-bit)")
+        rtn_label = f"RTN ({args.n_bits}-bit)"
+        if args.experimental and args.quantize_activations:
+            rtn_label += f" + Act Quant"
+        print(f"2. {rtn_label}")
         print(f"{'─'*50}")
         model_rtn = clone_model(model).to(device)
         t0 = time.time()
         rtn_info = replace_linear_weights(
             model_rtn, quantize_weight_rtn, n_bits=args.n_bits, verbose=True
         )
+
+        # Activation quantization hooks (if enabled)
+        act_quantizer = None
+        if args.experimental and args.quantize_activations:
+            act_quantizer = ActivationQuantizer(n_bits=args.n_bits)
+            act_quantizer.register(model_rtn, get_linear_layers(model_rtn, exclude_embeddings=exclude_emb))
+            print(f"  Registered {act_quantizer.layer_count} activation quantization hooks")
+
         t_rtn = time.time() - t0
         print(f"\n  Evaluating perplexity...")
         ppl_rtn = evaluate_perplexity(
             model_rtn, tokenizer, num_batches=args.eval_batches,
             batch_size=args.batch_size, max_length=args.max_length, device=device
         )
-        results[f"RTN ({args.n_bits}b)"] = ppl_rtn
+        if act_quantizer:
+            act_quantizer.remove()
+        results[rtn_label] = ppl_rtn
         print(f"  Perplexity: {ppl_rtn:.2f} (quantized in {t_rtn:.1f}s)")
         del model_rtn
 
-    # ── Optimized Rotor Quantization ──────────────────────────────────
-    if not args.skip_rotor:
+    # ── Optimized Rotor / Per-Grade Quantization ──────────────────────
+    if not args.skip_rotor and not args.per_grade and not args.ensemble:
         print(f"\n{'─'*50}")
         label = "Absorbed Rotor" if args.absorb else "Independent Rotor"
+        if args.experimental and args.quantize_activations:
+            label += " + Act Quant"
         print(f"3. {label} Quantization ({args.n_bits}-bit)")
         print(f"{'─'*50}")
 
         n_linear_layers = len(layers)
-        est_total = (n_linear_layers * args.n_steps * args.n_restarts * 2) / 60
         print(f"  Layers: {n_linear_layers}, Steps: {args.n_steps}, "
               f"Restarts: {args.n_restarts}")
 
@@ -735,12 +881,21 @@ def main():
                 n_restarts=args.n_restarts,
             )
 
+        # Activation quantization hooks (if enabled)
+        act_quantizer = None
+        if args.experimental and args.quantize_activations:
+            act_quantizer = ActivationQuantizer(n_bits=args.n_bits)
+            act_quantizer.register(model_rotor, get_linear_layers(model_rotor, exclude_embeddings=exclude_emb))
+            print(f"  Registered {act_quantizer.layer_count} activation quantization hooks")
+
         t_rotor = time.time() - t0
         print(f"\n  Evaluating perplexity...")
         ppl_rotor = evaluate_perplexity(
             model_rotor, tokenizer, num_batches=args.eval_batches,
             batch_size=args.batch_size, max_length=args.max_length, device=device
         )
+        if act_quantizer:
+            act_quantizer.remove()
         label_k = f"{label} ({args.n_bits}b)"
         results[label_k] = ppl_rotor
         print(f"  Perplexity: {ppl_rotor:.2f} (optimized in {t_rotor:.1f}s)")
@@ -763,19 +918,173 @@ def main():
                 print(f"    RTN fallbacks:    {fallbacks}/{len(rotor_info)}")
         del model_rotor
 
+    # ── Per-Grade Quantization ────────────────────────────────────────
+    if args.experimental and not args.skip_rotor and args.per_grade:
+        print(f"\n{'─'*50}")
+        bit_map_str = args.bit_map if args.bit_map else "0:8,2:3,strain:6"
+        # Parse bit-map string
+        bit_map = {}
+        for part in bit_map_str.split(","):
+            k, v = part.split(":")
+            k = k.strip()
+            if k == "strain":
+                bit_map["strain"] = int(v)
+            else:
+                bit_map[int(k)] = int(v)
+        from .experimental.per_grade_quant import quantize_per_grade, _avg_bit_width
+        hidden_dim = model.transformer.h[0].attn.embed_dim
+        avg_bits_est = _avg_bit_width(hidden_dim, bit_map)
+        label_pg = f"Per-Grade (bit map: {bit_map}, ~{avg_bits_est:.1f}b avg)"
+        if args.experimental and args.quantize_activations:
+            label_pg += " + Act Quant"
+        print(f"3. {label_pg}")
+        print(f"{'─'*50}")
+
+        model_pg = clone_model(model).to(device)
+        t0 = time.time()
+
+        # Use replace_linear_weights with a custom closure capturing bit_map
+        def _per_grade_quantize_fn(W, n_bits=4, **kwargs):
+            t_start = time.time()
+            W_q, info = quantize_per_grade(W, bit_map, verbose=False)
+            info["time"] = time.time() - t_start
+            return W_q, info
+
+        pg_info = replace_linear_weights(
+            model_pg, _per_grade_quantize_fn, n_bits=args.n_bits,
+            verbose=True,
+        )
+
+        # Activation quantization hooks (if enabled)
+        act_quantizer = None
+        if args.experimental and args.quantize_activations:
+            act_quantizer = ActivationQuantizer(n_bits=args.n_bits)
+            act_quantizer.register(model_pg, get_linear_layers(model_pg, exclude_embeddings=exclude_emb))
+            print(f"  Registered {act_quantizer.layer_count} activation quantization hooks")
+
+        t_pg = time.time() - t0
+        print(f"\n  Evaluating perplexity...")
+        ppl_pg = evaluate_perplexity(
+            model_pg, tokenizer, num_batches=args.eval_batches,
+            batch_size=args.batch_size, max_length=args.max_length, device=device
+        )
+        if act_quantizer:
+            act_quantizer.remove()
+        bit_map_label = f"PG({bit_map.get(0,8)},{bit_map.get(2,3)},{bit_map.get('strain',6)})"
+        label_k = f"{bit_map_label}"
+        if args.experimental and args.quantize_activations:
+            label_k += " + Act"
+        results[label_k] = ppl_pg
+        print(f"  Perplexity: {ppl_pg:.2f} (in {t_pg:.1f}s)")
+
+        # Summary stats
+        improvements = [
+            v.get("improvement_pct", 0) for v in pg_info.values()
+            if v.get("improvement_pct") is not None
+        ]
+        if improvements:
+            print(f"\n  Per-Grade NMSE improvement over uniform 4b RTN:")
+            print(f"    Mean improvement: {sum(improvements)/len(improvements):.1f}%")
+            print(f"    Max improvement:  {max(improvements):.1f}%")
+            print(f"    Layers improved:  {sum(1 for i in improvements if i > 0)}/{len(improvements)}")
+
+        # Average grade fractions
+        frac_scalars = [v.get("frac_scalar", 0) for v in pg_info.values() if "frac_scalar" in v]
+        frac_bivectors = [v.get("frac_bivector", 0) for v in pg_info.values() if "frac_bivector" in v]
+        frac_strains = [v.get("frac_strain", 0) for v in pg_info.values() if "frac_strain" in v]
+        if frac_scalars:
+            print(f"\n  Grade power distribution (avg across layers):")
+            print(f"    Scalar:   {sum(frac_scalars)/len(frac_scalars):.1%}")
+            print(f"    Bivector: {sum(frac_bivectors)/len(frac_bivectors):.1%}")
+            print(f"    Strain:   {sum(frac_strains)/len(frac_strains):.1%}")
+
+        # Storage cost note
+        b0 = bit_map.get(0, 8)
+        b2 = bit_map.get(2, 3)
+        bs = bit_map.get('strain', 6)
+        storage_bits = b0 + b2 + bs
+        print(f"\n  NOTE: Per-grade stores each grade as a full matrix before summing.")
+        print(f"  Storage cost: {b0}+{b2}+{bs} = {storage_bits} bits/param vs 4 bits/param (uniform RTN).")
+        print(f"  The effective avg ({avg_bits_est:.1f}b) counts only independent parameters.")
+        print(f"  A practical implementation could store grade components in packed formats.")
+        del model_pg
+
+    # ── Ensemble Quantization (Rotation-Aware Sub-models) ─────────────-
+    if args.experimental and args.ensemble:
+        from .experimental.ensemble_quant import optimize_ensemble_rotors
+
+        print(f"\n{'─'*50}")
+        label_ens = f"Ensemble (submodel={args.submodel_size})"
+        if args.experimental and args.quantize_activations:
+            label_ens += " + Act Quant"
+        print(f"3. {label_ens} Quantization ({args.n_bits}-bit)")
+        print(f"{'─'*50}")
+
+        n_blocks = len(model.transformer.h)
+        n_submodels = (n_blocks + args.submodel_size - 1) // args.submodel_size
+        print(f"  Blocks: {n_blocks}, Sub-models: {n_submodels}, "
+              f"Size: {args.submodel_size}, Steps: {args.n_steps}")
+
+        model_ens = clone_model(model).to(device)
+        t0 = time.time()
+
+        model_ens, ens_info = optimize_ensemble_rotors(
+            model_ens, tokenizer,
+            n_bits=args.n_bits,
+            n_steps_per_submodel=args.n_steps,
+            submodel_size=args.submodel_size,
+            n_calibration_batches=args.calibration_batches,
+            calibration_batch_size=args.calibration_batch_size,
+            max_length=args.max_length,
+            verbose=True,
+        )
+
+        # Activation quantization hooks (if enabled)
+        act_quantizer = None
+        if args.experimental and args.quantize_activations:
+            act_quantizer = ActivationQuantizer(n_bits=args.n_bits)
+            act_quantizer.register(model_ens, get_linear_layers(model_ens, exclude_embeddings=exclude_emb))
+            print(f"  Registered {act_quantizer.layer_count} activation quantization hooks")
+
+        t_ens = time.time() - t0
+        print(f"\n  Evaluating perplexity...")
+        ppl_ens = evaluate_perplexity(
+            model_ens, tokenizer, num_batches=args.eval_batches,
+            batch_size=args.batch_size, max_length=args.max_length, device=device
+        )
+        if act_quantizer:
+            act_quantizer.remove()
+        label_k = f"Ensemble (submodel={args.submodel_size}) ({args.n_bits}b)"
+        if args.experimental and args.quantize_activations:
+            label_k += " + Act"
+        results[label_k] = ppl_ens
+        print(f"  Perplexity: {ppl_ens:.2f} (optimized in {t_ens:.1f}s)")
+
+        # Summary stats
+        improvements = [
+            v.get("improvement_pct", 0) for v in ens_info.values()
+            if v.get("improvement_pct") is not None
+        ]
+        if improvements:
+            print(f"\n  Ensemble improvement over RTN (per sub-model):")
+            print(f"    Mean improvement: {sum(improvements)/len(improvements):.1f}%")
+            print(f"    Sub-models improved: {sum(1 for i in improvements if i > 0)}/{len(improvements)}")
+        del model_ens
+
     # ── Summary ───────────────────────────────────────────────────────
     print(f"\n{'='*70}")
     print("SUMMARY")
     print(f"{'='*70}")
     for method, ppl in results.items():
-        print(f"  {method:30s}: PPL = {ppl:.2f}")
-    if "FP16" in results:
-        print(f"  {'─'*40}")
+        ppl_str = f"{ppl:.2f}" if math.isfinite(ppl) else "N/A"
+        print(f"  {method:40s}: PPL = {ppl_str}")
+    if "FP16" in results and math.isfinite(results["FP16"]):
+        print(f"  {'─'*45}")
         for method, ppl in results.items():
-            if method != "FP16":
+            if method != "FP16" and math.isfinite(ppl):
                 degradation = ppl - results["FP16"]
                 pct = (ppl / results["FP16"] - 1) * 100
-                print(f"  Degradation vs FP16 ({method:20s}): +{degradation:.2f} PPL ({pct:+.1f}%)")
+                print(f"  Degradation vs FP16 ({method:27s}): +{degradation:.2f} PPL ({pct:+.1f}%)")
     print()
 
 

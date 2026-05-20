@@ -16,3 +16,6 @@ _debug_*.py
 gaflowlm/
 gamuon/
 gattrlm/
+
+# Local-only notes
+docs/local_scabi.md
