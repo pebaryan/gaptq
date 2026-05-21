@@ -192,3 +192,40 @@ The rotor idea only becomes a serious PTQ result if the benchmark shows at least
 - a clear pathway to a better hybrid method, such as rotor plus scaling
 
 Do not continue the existing projection-residual implementation unless you change the objective or the transform family in a material way.
+
+## 7. Next benchmark plan
+
+The next benchmark should answer whether grade allocation is genuinely helping,
+or whether it is just a better heuristic than RTN.
+
+### 7.1 Add one stronger non-GA baseline
+
+Preferred baseline:
+- AWQ-style activation-aware group quantization
+
+Fallback if AWQ is not available:
+- per-channel scaling + RTN on the same `mlp.c_proj` slice
+
+### 7.2 Run order
+
+1. RTN
+2. learned rotor
+3. `mlp.c_proj` grade allocation
+4. stronger non-GA baseline
+5. rotor plus scaling, only if needed as a hybrid comparison
+
+### 7.3 Decision rules
+
+Treat grade allocation as promising if:
+- it beats RTN on both `gpt2` and `gpt2-medium`
+- it stays competitive with the stronger non-GA baseline
+- it remains cheap enough that runtime overhead is minor
+
+Treat it as a heuristic gain if:
+- it beats RTN but loses to the stronger non-GA baseline
+- it only works on `mlp.c_proj`
+- it depends heavily on the current candidate search
+
+Treat it as rejected if:
+- the stronger non-GA baseline matches or beats it on both models
+- the gain disappears when the search is simplified

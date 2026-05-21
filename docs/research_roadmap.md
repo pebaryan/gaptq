@@ -350,3 +350,48 @@ The current evidence says:
 - scaling and task-aware objectives are probably missing pieces
 
 That is a good research starting point.
+
+## 8. Next benchmark plan
+
+The next question is whether grade allocation is actually doing something
+geometric, or whether it is just a better bit-budget heuristic than RTN.
+
+### 8.1 Add one stronger non-GA baseline
+
+Add an AWQ-style or GPTQ-style baseline before spending more time on new
+geometry families.
+
+Recommended first choice:
+- **AWQ-style activation-aware group quantization**
+
+Why this one:
+- it is a strong practical PTQ baseline
+- it targets the same outlier / sensitivity problem without GA decomposition
+- it gives a better answer than RTN to the question “what is grade allocation buying us?”
+
+If a full AWQ implementation is not available, a simpler fallback is:
+- per-channel scaling + RTN on the same `mlp.c_proj` slice
+
+### 8.2 Run order
+
+1. RTN
+2. rotor-only
+3. `mlp.c_proj` grade allocation
+4. stronger non-GA baseline
+5. if needed, rotor + scaling as a hybrid comparison
+
+### 8.3 Pass / fail criteria
+
+Treat grade allocation as promising if:
+- it beats RTN on both `gpt2` and `gpt2-medium`
+- it stays competitive with the stronger non-GA baseline
+- it does not become significantly slower than the current live path
+
+Treat it as a heuristic improvement if:
+- it beats RTN but loses to the stronger non-GA baseline
+- it only works on `mlp.c_proj`
+- it stops working when the bit-cost penalty is tightened
+
+Treat it as a rejected branch if:
+- the stronger non-GA baseline matches or beats it on both models
+- the gain disappears when the candidate search is simplified
