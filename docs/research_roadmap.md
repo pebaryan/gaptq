@@ -372,6 +372,11 @@ Why this one:
 If a full AWQ implementation is not available, a simpler fallback is:
 - per-channel scaling + RTN on the same `mlp.c_proj` slice
 
+The current diagonal-scaling baseline is a mixed comparator:
+- it improved `gpt2`
+- it hurt `gpt2-medium`
+- treat it as a baseline, not as a replacement for the live grade-allocation path
+
 ### 8.2 Run order
 
 1. RTN

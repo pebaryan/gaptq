@@ -465,6 +465,112 @@ def quantize_weight_rtn(
     return W_q, info
 
 
+def _compute_diagonal_scaling(
+    W: torch.Tensor,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    alpha: float = 0.5,
+) -> torch.Tensor:
+    """Compute a positive diagonal preconditioning vector for the input space.
+
+    Uses calibration activations when available, otherwise falls back to weight
+    column norms. The vector is normalized to unit mean so the scale search is
+    focused on redistribution rather than global gain.
+    """
+    eps = 1e-6
+    col_norm = W.pow(2).mean(dim=0).sqrt().clamp_min(eps)
+
+    if calibration_inputs is not None and calibration_inputs.numel() > 0:
+        act_norm = calibration_inputs.pow(2).mean(dim=0).sqrt().clamp_min(eps)
+    else:
+        act_norm = col_norm
+
+    scale = (act_norm / col_norm).pow(alpha)
+    scale = scale / scale.mean().clamp_min(eps)
+    return scale.clamp(0.25, 4.0)
+
+
+def quantize_weight_with_diag_scaling(
+    W: torch.Tensor,
+    n_bits: int = 4,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    calibration_targets: Optional[torch.Tensor] = None,
+    calibration_train_frac: float = 0.8,
+    candidate_alphas: Optional[List[float]] = None,
+    verbose: bool = False,
+    **kwargs,
+) -> Tuple[torch.Tensor, Dict]:
+    """Quantize a weight matrix using diagonal input preconditioning.
+
+    This is a simple non-GA baseline:
+    1. compute a positive input-channel scale vector from calibration activations
+       and/or weight column norms,
+    2. scale the weight matrix on the input axis,
+    3. quantize the scaled matrix with RTN,
+    4. undo the scale.
+    """
+    t0 = time.time()
+
+    if candidate_alphas is None:
+        candidate_alphas = [0.0, 0.25, 0.5, 0.75, 1.0]
+
+    x_fit, y_fit, x_val, y_val = _split_calibration_rows(
+        calibration_inputs, calibration_targets, train_frac=calibration_train_frac
+    )
+    if x_val is None or y_val is None:
+        x_val = x_fit
+        y_val = y_fit
+
+    best_score = float("inf")
+    best_alpha = None
+    best_scale = None
+    best_W_q = None
+    best_loss = float("inf")
+
+    for alpha in candidate_alphas:
+        scale = _compute_diagonal_scaling(W, calibration_inputs=x_fit, alpha=alpha)
+        W_scaled = W * scale.unsqueeze(0)
+        W_q_scaled, _ = quantize_weight_rtn(W_scaled, n_bits)
+        W_q = W_q_scaled / scale.unsqueeze(0)
+
+        if x_val is not None and y_val is not None:
+            val_loss = F.mse_loss(x_val @ W_q.T, y_val).item()
+        else:
+            val_loss = quantization_error(W, W_q).item()
+
+        score = val_loss
+        if score < best_score:
+            best_score = score
+            best_alpha = alpha
+            best_scale = scale
+            best_W_q = W_q
+            best_loss = val_loss
+
+    assert best_W_q is not None and best_scale is not None and best_alpha is not None
+
+    W_rtn_tensor, _ = quantize_weight_rtn(W, n_bits)
+    nmse_rtn = quantization_error(W, W_rtn_tensor).item()
+    nmse_scaled = quantization_error(W, best_W_q).item()
+    improvement = (nmse_rtn - nmse_scaled) / nmse_rtn * 100 if nmse_rtn > 0 else 0.0
+
+    info = {
+        "mode": "diag_scaling",
+        "time": time.time() - t0,
+        "in_dim": W.shape[1],
+        "out_dim": W.shape[0],
+        "alpha": best_alpha,
+        "scale_mean": best_scale.mean().item(),
+        "scale_min": best_scale.min().item(),
+        "scale_max": best_scale.max().item(),
+        "selection_loss": best_loss,
+        "nmse_rtn": nmse_rtn,
+        "nmse_rotor": nmse_scaled,
+        "improvement_pct": improvement,
+    }
+    if x_val is not None and y_val is not None:
+        info["calibration_loss"] = best_loss
+    return best_W_q, info
+
+
 def _choose_rotor_mode(in_dim: int) -> str:
     """Choose the rotor mode based on input dimension.
 
@@ -1399,7 +1505,7 @@ def replace_linear_weights(
         if verbose:
             mode = info["mode"]
             t = info["time"]
-            if mode in ("full_rotor", "block_rotor", "block_rotor_scale", "projection_residual", "projection_residual_model", "householder_reflection", "grade_allocation"):
+            if mode in ("full_rotor", "block_rotor", "block_rotor_scale", "projection_residual", "projection_residual_model", "householder_reflection", "grade_allocation", "diag_scaling"):
                 impr = info.get("improvement_pct", 0)
                 if mode == "block_rotor_scale":
                     scale_stats = ""
@@ -1431,6 +1537,12 @@ def replace_linear_weights(
                     bmap = info.get("bit_map", {})
                     print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> GradeAlloc={info['nmse_rotor']:.6f} "
                           f"({impr:+.1f}%) [~{bits:.1f}b, map={bmap}] in {t:.1f}s")
+                elif mode == "diag_scaling":
+                    alpha = info.get("alpha", "?")
+                    smin = info.get("scale_min", 0.0)
+                    smax = info.get("scale_max", 0.0)
+                    print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> DiagScale={info['nmse_rotor']:.6f} "
+                          f"({impr:+.1f}%) [alpha={alpha}, scale={smin:.2f}-{smax:.2f}] in {t:.1f}s")
                 else:
                     m = mode[:5]  # 'full_' or 'block'
                     print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> Rotor={info['nmse_rotor']:.6f} "
@@ -1608,6 +1720,12 @@ def main():
                         help="Regex for layers eligible for grade-aware allocation")
     parser.add_argument("--grade-bit-cost", type=float, default=1e-2,
                         help="Penalty weight for larger average bit maps in grade allocation")
+    parser.add_argument("--diag-scale", action="store_true",
+                        help="Experimental: activation-aware diagonal preconditioning before RTN")
+    parser.add_argument("--diag-scale-regex", type=str, default=r"mlp\.c_proj$",
+                        help="Regex for layers eligible for diagonal scaling")
+    parser.add_argument("--diag-scale-alpha", type=float, default=0.5,
+                        help="Default alpha value for diagonal scaling if no candidate search is used")
     parser.add_argument("--hotspot-steps", type=int, default=0,
                         help="Optional extra optimization steps for hotspot projection layers")
     parser.add_argument("--hotspot-regex", type=str, default=r"(?:attn|mlp)\.c_proj$",
@@ -1632,9 +1750,10 @@ def main():
         args.per_grade or args.quantize_activations or args.ensemble or
         args.rotor_scale or args.projection_residual or args.projection_residual_model or
         args.reflection or args.grade_alloc or args.hotspot_steps > 0
+        or args.diag_scale
     )
     if experimental_requested and not args.experimental:
-        parser.error("--per-grade, --quantize-activations, --ensemble, --rotor-scale, --projection-residual, --projection-residual-model, --reflection, --grade-alloc, and --hotspot-steps require --experimental")
+        parser.error("--per-grade, --quantize-activations, --ensemble, --rotor-scale, --projection-residual, --projection-residual-model, --reflection, --grade-alloc, --diag-scale, and --hotspot-steps require --experimental")
 
     print("=" * 70)
     if args.experimental and args.per_grade:
@@ -1647,6 +1766,8 @@ def main():
         mode_str = "Reflection"
     elif args.experimental and args.grade_alloc:
         mode_str = "Grade Allocation"
+    elif args.experimental and args.diag_scale:
+        mode_str = "Diagonal Scaling"
     elif args.experimental and args.projection_residual:
         mode_str = "Projection + Residual"
     elif args.experimental and args.projection_residual_model:
@@ -1737,6 +1858,8 @@ def main():
             label = "Reflection"
         elif args.experimental and args.grade_alloc:
             label = "Grade Allocation"
+        elif args.experimental and args.diag_scale:
+            label = "Diagonal Scaling"
         elif args.experimental and args.projection_residual_model:
             label = "Projection + Residual Model"
         elif args.experimental and args.projection_residual:
@@ -1762,7 +1885,7 @@ def main():
 
         calibration_pairs = {}
         task_calibration_batches = []
-        if args.experimental and (args.rotor_scale or args.projection_residual or args.projection_residual_model or args.reflection or args.grade_alloc):
+        if args.experimental and (args.rotor_scale or args.projection_residual or args.projection_residual_model or args.reflection or args.grade_alloc or args.diag_scale):
             print(
                 f"  Collecting calibration pairs "
                 f"({args.calibration_batches} batches, batch_size={args.calibration_batch_size})..."
@@ -1851,6 +1974,38 @@ def main():
             rotor_info = replace_linear_weights(
                 model_rotor,
                 _grade_alloc_quantize_fn,
+                n_bits=args.n_bits,
+                verbose=True,
+                n_optimization_steps=args.n_steps,
+                n_restarts=args.n_restarts,
+            )
+        elif args.experimental and args.diag_scale:
+            def _diag_scale_quantize_fn(W, n_bits=4, layer_name=None, **kwargs):
+                cal_in, cal_tgt = calibration_pairs.get(layer_name, (None, None))
+                if cal_in is not None:
+                    cal_in = cal_in.to(W.device, dtype=W.dtype)
+                if cal_tgt is not None:
+                    cal_tgt = cal_tgt.to(W.device, dtype=W.dtype)
+                if layer_name is not None and not re.search(args.diag_scale_regex, layer_name):
+                    return quantize_weight_rtn(W, n_bits=n_bits)
+                return quantize_weight_with_diag_scaling(
+                    W,
+                    n_bits=n_bits,
+                    calibration_inputs=cal_in,
+                    calibration_targets=cal_tgt,
+                    candidate_alphas=[
+                        max(0.0, args.diag_scale_alpha - 0.5),
+                        max(0.0, args.diag_scale_alpha - 0.25),
+                        args.diag_scale_alpha,
+                        min(1.0, args.diag_scale_alpha + 0.25),
+                        min(1.0, args.diag_scale_alpha + 0.5),
+                    ],
+                    verbose=False,
+                )
+
+            rotor_info = replace_linear_weights(
+                model_rotor,
+                _diag_scale_quantize_fn,
                 n_bits=args.n_bits,
                 verbose=True,
                 n_optimization_steps=args.n_steps,

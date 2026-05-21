@@ -206,6 +206,11 @@ Preferred baseline:
 Fallback if AWQ is not available:
 - per-channel scaling + RTN on the same `mlp.c_proj` slice
 
+Current diagonal-scaling comparator:
+- improved `gpt2`
+- hurt `gpt2-medium`
+- keep it as a reference baseline, not a replacement for grade allocation
+
 ### 7.2 Run order
 
 1. RTN

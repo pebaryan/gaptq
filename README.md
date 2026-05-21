@@ -45,6 +45,7 @@ The projection-residual experiment is now treated as an archived negative result
 The reflection baseline is also archived as a negative result: it is cheap and locally stable, but it does not improve perplexity on the benchmark models.
 The next live subspace experiment is no longer the low-rank residual model. The data show that branch is a dead end as written.
 Grade allocation on `mlp.c_proj` is the current live subspace candidate. The broader `(?:attn|mlp)\.c_proj$` slice was superseded by the MLP-only slice, and the attention-only slice was rejected.
+The diagonal-scaling baseline is a useful comparator: it improved `gpt2`, but it did not hold up on `gpt2-medium`.
 
 ## Benchmark Snapshot
 
@@ -71,3 +72,4 @@ Results from the cleaned core benchmark:
 - The experimental branches are not part of the core claim and should not be read as validated methods.
 - Activation quantization, per-grade quantization, and ensemble quantization remain exploratory.
 - Grade allocation is the current live subspace candidate, but the evidence is still mixed and model-dependent even after narrowing to `mlp.c_proj`.
+- Diagonal scaling is a useful baseline, not the main claim.

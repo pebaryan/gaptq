@@ -73,6 +73,29 @@ python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 
 | Was the transform cheap enough? | Yes. It was much cheaper than the rotor-scale or projection branches. |
 | Does this justify more work? | Yes, on the `mlp.c_proj` slice. The attention-only slice is a rejection, and the broad slice is now just a comparison point. |
 
+## Diagonal Scaling Baseline
+
+Stable settings used:
+
+```bash
+python -m gaptq.quantize_model --experimental --diag-scale --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --diag-scale --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | Diagonal Scaling PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 91.69 | 6.4% | 8/12 | 0.3s |
+| `gpt2-medium` | 44.17 | 55.19 | 55.94 | -3.3% | 13/24 | 0.6s |
+
+## Diagonal Scaling Interpretation
+
+| Question | Notes |
+|---|---|
+| Did diagonal scaling beat RTN? | Yes on `gpt2`, no on `gpt2-medium`. |
+| Was it cheaper than the geometric transforms? | Yes. It was very cheap. |
+| Did it give a cleaner answer than grade allocation? | No. It looks like a useful comparator, not the main method. |
+| What does it tell us? | Non-GA diagonal preconditioning is a real baseline, but it is not enough by itself to replace the current grade-allocation result. |
+
 ## Reflection Baseline
 
 Stable settings used:
