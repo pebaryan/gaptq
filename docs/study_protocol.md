@@ -165,6 +165,22 @@ Record:
 - which family is sensitive to rotation
 - whether a targeted transform would be better than a global one
 
+### 3.10 AWQ-style proxy baseline
+
+This is the strongest current non-GA comparator in-tree.
+
+Run:
+
+```bash
+python -m gaptq.quantize_model --experimental --awq-proxy --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --awq-proxy --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+Record:
+- whether the proxy beats RTN
+- whether it beats the live grade-allocation branch
+- whether it remains cheap enough to be a meaningful comparator
+
 ## 4. Decision Rules
 
 Treat the rotor direction as promising if it does at least one of these:
@@ -199,13 +215,24 @@ Do not continue the existing projection-residual implementation unless you chang
 The next benchmark should answer whether grade allocation is genuinely helping,
 or whether it is just a better heuristic than RTN.
 
-### 7.1 Add one stronger non-GA baseline
+### 7.1 AWQ-style proxy baseline
 
-Preferred baseline:
-- AWQ-style activation-aware group quantization
+The repo now has an AWQ-style proxy baseline on `mlp.c_proj`. It is the
+strongest current non-GA comparator in-tree and should be treated as the bar
+for the live grade-allocation branch.
 
-Fallback if AWQ is not available:
-- per-channel scaling + RTN on the same `mlp.c_proj` slice
+What the current result says:
+- the AWQ proxy beats RTN on both `gpt2` and `gpt2-medium`
+- grade allocation still beats the AWQ proxy on both models
+- the live question is therefore not whether a stronger baseline exists, but
+  whether grade allocation can continue to beat it on harder slices or larger
+  models
+
+Why this baseline matters:
+- it is a strong practical PTQ comparator
+- it targets the same outlier / sensitivity problem without GA decomposition
+- it tells us whether the current grade-allocation gain is structural or mostly
+  a search heuristic
 
 Current diagonal-scaling comparator:
 - improved `gpt2`
@@ -217,21 +244,21 @@ Current diagonal-scaling comparator:
 1. RTN
 2. learned rotor
 3. `mlp.c_proj` grade allocation
-4. stronger non-GA baseline
+4. AWQ-style proxy baseline
 5. rotor plus scaling, only if needed as a hybrid comparison
 
 ### 7.3 Decision rules
 
 Treat grade allocation as promising if:
 - it beats RTN on both `gpt2` and `gpt2-medium`
-- it stays competitive with the stronger non-GA baseline
+- it stays competitive with the AWQ-style proxy baseline
 - it remains cheap enough that runtime overhead is minor
 
 Treat it as a heuristic gain if:
-- it beats RTN but loses to the stronger non-GA baseline
+- it beats RTN but loses to the AWQ-style proxy baseline
 - it only works on `mlp.c_proj`
 - it depends heavily on the current candidate search
 
 Treat it as rejected if:
-- the stronger non-GA baseline matches or beats it on both models
+- the AWQ-style proxy baseline matches or beats it on both models
 - the gain disappears when the search is simplified

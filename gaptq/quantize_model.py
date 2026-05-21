@@ -571,6 +571,120 @@ def quantize_weight_with_diag_scaling(
     return best_W_q, info
 
 
+def quantize_weight_with_awq_proxy(
+    W: torch.Tensor,
+    n_bits: int = 4,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    calibration_targets: Optional[torch.Tensor] = None,
+    calibration_train_frac: float = 0.8,
+    candidate_topk_fracs: Optional[List[float]] = None,
+    candidate_salient_bits: Optional[List[int]] = None,
+    bit_cost_weight: float = 5e-3,
+    verbose: bool = False,
+    **kwargs,
+) -> Tuple[torch.Tensor, Dict]:
+    """Quantize a weight matrix with an AWQ-style mixed-precision proxy.
+
+    This is a simple external-baseline comparator:
+    - rank input channels by a saliency score derived from activations and weights
+    - assign a slightly higher bit-width to the most salient columns
+    - quantize the rest at the base bit-width
+
+    It is not a full AWQ reimplementation, but it captures the key idea:
+    spend a little more precision on the columns that matter most.
+    """
+    t0 = time.time()
+
+    if candidate_topk_fracs is None:
+        candidate_topk_fracs = [0.01, 0.02, 0.05, 0.10]
+    if candidate_salient_bits is None:
+        candidate_salient_bits = [6, 8]
+
+    x_fit, y_fit, x_val, y_val = _split_calibration_rows(
+        calibration_inputs, calibration_targets, train_frac=calibration_train_frac
+    )
+    if x_val is None or y_val is None:
+        x_val = x_fit
+        y_val = y_fit
+
+    eps = 1e-6
+    if x_fit is not None and x_fit.numel() > 0:
+        act_norm = x_fit.pow(2).mean(dim=0).sqrt().clamp_min(eps)
+    else:
+        act_norm = torch.ones(W.shape[1], device=W.device, dtype=W.dtype)
+    weight_norm = W.pow(2).mean(dim=0).sqrt().clamp_min(eps)
+    saliency = act_norm * weight_norm
+    saliency_order = torch.argsort(saliency, descending=True)
+
+    best_score = float("inf")
+    best_loss = float("inf")
+    best_frac = None
+    best_salient_bits = None
+    best_avg_bits = None
+    best_W_q = None
+
+    for frac in candidate_topk_fracs:
+        k = max(1, int(round(frac * W.shape[1])))
+        salient_idx = saliency_order[:k]
+        nonsalient_idx = saliency_order[k:]
+        for salient_bits in candidate_salient_bits:
+            if salient_bits <= n_bits:
+                continue
+
+            W_q = torch.empty_like(W)
+            if nonsalient_idx.numel() > 0:
+                W_low = W[:, nonsalient_idx]
+                W_q[:, nonsalient_idx] = UniformQuantizer(
+                    n_bits, symmetric=True, per_channel=True
+                )(W_low)
+            if salient_idx.numel() > 0:
+                W_high = W[:, salient_idx]
+                W_q[:, salient_idx] = UniformQuantizer(
+                    salient_bits, symmetric=True, per_channel=True
+                )(W_high)
+
+            if x_val is not None and y_val is not None:
+                val_loss = F.mse_loss(x_val @ W_q.T, y_val).item()
+            else:
+                val_loss = quantization_error(W, W_q).item()
+
+            avg_bits = n_bits * (1.0 - frac) + salient_bits * frac
+            score = val_loss + bit_cost_weight * avg_bits
+
+            if score < best_score:
+                best_score = score
+                best_loss = val_loss
+                best_frac = frac
+                best_salient_bits = salient_bits
+                best_avg_bits = avg_bits
+                best_W_q = W_q
+
+    assert best_W_q is not None and best_frac is not None and best_salient_bits is not None
+
+    W_rtn_tensor, _ = quantize_weight_rtn(W, n_bits)
+    nmse_rtn = quantization_error(W, W_rtn_tensor).item()
+    nmse_awq = quantization_error(W, best_W_q).item()
+    improvement = (nmse_rtn - nmse_awq) / nmse_rtn * 100 if nmse_rtn > 0 else 0.0
+
+    info = {
+        "mode": "awq_proxy",
+        "time": time.time() - t0,
+        "in_dim": W.shape[1],
+        "out_dim": W.shape[0],
+        "topk_frac": best_frac,
+        "salient_bits": best_salient_bits,
+        "avg_bits": best_avg_bits,
+        "selection_loss": best_loss,
+        "selection_score": best_score,
+        "nmse_rtn": nmse_rtn,
+        "nmse_rotor": nmse_awq,
+        "improvement_pct": improvement,
+    }
+    if x_val is not None and y_val is not None:
+        info["calibration_loss"] = best_loss
+    return best_W_q, info
+
+
 def _choose_rotor_mode(in_dim: int) -> str:
     """Choose the rotor mode based on input dimension.
 
@@ -1505,7 +1619,7 @@ def replace_linear_weights(
         if verbose:
             mode = info["mode"]
             t = info["time"]
-            if mode in ("full_rotor", "block_rotor", "block_rotor_scale", "projection_residual", "projection_residual_model", "householder_reflection", "grade_allocation", "diag_scaling"):
+            if mode in ("full_rotor", "block_rotor", "block_rotor_scale", "projection_residual", "projection_residual_model", "householder_reflection", "grade_allocation", "diag_scaling", "awq_proxy"):
                 impr = info.get("improvement_pct", 0)
                 if mode == "block_rotor_scale":
                     scale_stats = ""
@@ -1543,6 +1657,12 @@ def replace_linear_weights(
                     smax = info.get("scale_max", 0.0)
                     print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> DiagScale={info['nmse_rotor']:.6f} "
                           f"({impr:+.1f}%) [alpha={alpha}, scale={smin:.2f}-{smax:.2f}] in {t:.1f}s")
+                elif mode == "awq_proxy":
+                    frac = info.get("topk_frac", 0.0)
+                    sbits = info.get("salient_bits", "?")
+                    avg_bits = info.get("avg_bits", 0.0)
+                    print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> AWQProxy={info['nmse_rotor']:.6f} "
+                          f"({impr:+.1f}%) [topk={frac:.0%}, s={sbits}, ~{avg_bits:.1f}b] in {t:.1f}s")
                 else:
                     m = mode[:5]  # 'full_' or 'block'
                     print(f"         NMSE: RTN={info['nmse_rtn']:.6f} -> Rotor={info['nmse_rotor']:.6f} "
@@ -1726,6 +1846,12 @@ def main():
                         help="Regex for layers eligible for diagonal scaling")
     parser.add_argument("--diag-scale-alpha", type=float, default=0.5,
                         help="Default alpha value for diagonal scaling if no candidate search is used")
+    parser.add_argument("--awq-proxy", action="store_true",
+                        help="Experimental: AWQ-style activation-aware mixed-precision proxy")
+    parser.add_argument("--awq-proxy-regex", type=str, default=r"mlp\.c_proj$",
+                        help="Regex for layers eligible for the AWQ-style proxy")
+    parser.add_argument("--awq-bit-cost", type=float, default=5e-3,
+                        help="Penalty weight for larger average bit allocations in the AWQ proxy")
     parser.add_argument("--hotspot-steps", type=int, default=0,
                         help="Optional extra optimization steps for hotspot projection layers")
     parser.add_argument("--hotspot-regex", type=str, default=r"(?:attn|mlp)\.c_proj$",
@@ -1750,10 +1876,10 @@ def main():
         args.per_grade or args.quantize_activations or args.ensemble or
         args.rotor_scale or args.projection_residual or args.projection_residual_model or
         args.reflection or args.grade_alloc or args.hotspot_steps > 0
-        or args.diag_scale
+        or args.diag_scale or args.awq_proxy
     )
     if experimental_requested and not args.experimental:
-        parser.error("--per-grade, --quantize-activations, --ensemble, --rotor-scale, --projection-residual, --projection-residual-model, --reflection, --grade-alloc, --diag-scale, and --hotspot-steps require --experimental")
+        parser.error("--per-grade, --quantize-activations, --ensemble, --rotor-scale, --projection-residual, --projection-residual-model, --reflection, --grade-alloc, --diag-scale, --awq-proxy, and --hotspot-steps require --experimental")
 
     print("=" * 70)
     if args.experimental and args.per_grade:
@@ -1768,6 +1894,8 @@ def main():
         mode_str = "Grade Allocation"
     elif args.experimental and args.diag_scale:
         mode_str = "Diagonal Scaling"
+    elif args.experimental and args.awq_proxy:
+        mode_str = "AWQ Proxy"
     elif args.experimental and args.projection_residual:
         mode_str = "Projection + Residual"
     elif args.experimental and args.projection_residual_model:
@@ -1860,6 +1988,8 @@ def main():
             label = "Grade Allocation"
         elif args.experimental and args.diag_scale:
             label = "Diagonal Scaling"
+        elif args.experimental and args.awq_proxy:
+            label = "AWQ Proxy"
         elif args.experimental and args.projection_residual_model:
             label = "Projection + Residual Model"
         elif args.experimental and args.projection_residual:
@@ -1885,7 +2015,7 @@ def main():
 
         calibration_pairs = {}
         task_calibration_batches = []
-        if args.experimental and (args.rotor_scale or args.projection_residual or args.projection_residual_model or args.reflection or args.grade_alloc or args.diag_scale):
+        if args.experimental and (args.rotor_scale or args.projection_residual or args.projection_residual_model or args.reflection or args.grade_alloc or args.diag_scale or args.awq_proxy):
             print(
                 f"  Collecting calibration pairs "
                 f"({args.calibration_batches} batches, batch_size={args.calibration_batch_size})..."
@@ -2006,6 +2136,32 @@ def main():
             rotor_info = replace_linear_weights(
                 model_rotor,
                 _diag_scale_quantize_fn,
+                n_bits=args.n_bits,
+                verbose=True,
+                n_optimization_steps=args.n_steps,
+                n_restarts=args.n_restarts,
+            )
+        elif args.experimental and args.awq_proxy:
+            def _awq_proxy_quantize_fn(W, n_bits=4, layer_name=None, **kwargs):
+                cal_in, cal_tgt = calibration_pairs.get(layer_name, (None, None))
+                if cal_in is not None:
+                    cal_in = cal_in.to(W.device, dtype=W.dtype)
+                if cal_tgt is not None:
+                    cal_tgt = cal_tgt.to(W.device, dtype=W.dtype)
+                if layer_name is not None and not re.search(args.awq_proxy_regex, layer_name):
+                    return quantize_weight_rtn(W, n_bits=n_bits)
+                return quantize_weight_with_awq_proxy(
+                    W,
+                    n_bits=n_bits,
+                    calibration_inputs=cal_in,
+                    calibration_targets=cal_tgt,
+                    bit_cost_weight=args.awq_bit_cost,
+                    verbose=False,
+                )
+
+            rotor_info = replace_linear_weights(
+                model_rotor,
+                _awq_proxy_quantize_fn,
                 n_bits=args.n_bits,
                 verbose=True,
                 n_optimization_steps=args.n_steps,

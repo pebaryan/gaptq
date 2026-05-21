@@ -10,12 +10,17 @@ The short version:
 - **SmoothQuant** is the closest analogue to the diagonal-scaling comparator, because it explicitly migrates activation difficulty into the weights with an equivalent transform.
 - **QuaRot** is the closest external analogue to the earlier rotor work, but it is broader: rotation is only one part of an end-to-end 4-bit inference pipeline.
 
+The repo now contains an AWQ-style proxy baseline on `mlp.c_proj` that behaves like a
+saliency-weighted mixed-precision comparator. It is not a full AWQ implementation,
+but it is the right external-style baseline to compare against the current live
+grade-allocation branch.
+
 ## 1. Method Summary
 
 | Method | Core idea | What it is good at | What it suggests for this repo |
 |---|---|---|---|
 | GPTQ | Approximate second-order, one-shot weight quantization | Strong weight-only accuracy at 3-4 bits | Uniform RTN is too weak a baseline; sensitivity-aware weight PTQ should be compared next |
-| AWQ | Activation-aware weight quantization | Low-bit weight-only quantization with activation/outlier awareness | The repo’s grade allocation is conceptually closest to AWQ-style bit budgeting |
+| AWQ | Activation-aware weight quantization | Low-bit weight-only quantization with activation/outlier awareness | The repo’s grade allocation is conceptually closest to AWQ-style bit budgeting; the new AWQ proxy now serves as the strongest in-repo non-GA comparator |
 | SmoothQuant | Smooth activation outliers by equivalent scaling | W8A8 PTQ and hardware-efficient inference | The repo’s diagonal-scaling baseline is the nearest in spirit, though not the same method |
 | QuaRot | Rotation-based end-to-end 4-bit inference | Rotation plus activation/KV quantization | Rotor-only is not enough; the transform must fit a larger quantization pipeline |
 
@@ -42,6 +47,7 @@ Implication for GAP-TQ:
 - AWQ is the closest conceptual comparator to the current `mlp.c_proj` grade-allocation branch.
 - Both approaches are trying to spend precision unevenly on the weights.
 - If AWQ beats grade allocation, then the repo’s current gain is mostly a heuristic improvement over RTN, not a new structural result.
+- The in-repo AWQ proxy currently beats RTN on both `gpt2` and `gpt2-medium`, but grade allocation still wins on both models.
 
 Sources:
 - [AWQ paper](https://arxiv.org/abs/2306.00978)
@@ -86,7 +92,7 @@ That lines up with the repo’s empirical path:
 
 - rotor-only helped local error but was not consistently enough for perplexity
 - diagonal scaling helped `gpt2` but not `gpt2-medium`
-- grade allocation on `mlp.c_proj` is currently the best live result
+- the AWQ proxy is the strongest in-repo external-style comparator and beats RTN on both models
+- grade allocation on `mlp.c_proj` is still the best live result
 
-So the next benchmark should compare the live grade-allocation branch against a stronger sensitivity-aware baseline, ideally GPTQ or AWQ, rather than asking for more geometry immediately.
-
+So the next benchmark question is no longer whether a stronger external-style comparator exists; it does, and the repo now has one. The open question is whether grade allocation is still genuinely better than the AWQ-style baseline, or whether it is just a heuristic improvement over RTN.

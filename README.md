@@ -47,6 +47,7 @@ The reflection baseline is also archived as a negative result: it is cheap and l
 The next live subspace experiment is no longer the low-rank residual model. The data show that branch is a dead end as written.
 Grade allocation on `mlp.c_proj` is the current live subspace candidate. The broader `(?:attn|mlp)\.c_proj$` slice was superseded by the MLP-only slice, and the attention-only slice was rejected.
 The diagonal-scaling baseline is a useful comparator: it improved `gpt2`, but it did not hold up on `gpt2-medium`.
+The AWQ-style proxy baseline is the strongest current non-GA comparator: it beats RTN on both benchmark models, but grade allocation still beats it on both.
 
 ## Benchmark Snapshot
 
@@ -74,3 +75,4 @@ Results from the cleaned core benchmark:
 - Activation quantization, per-grade quantization, and ensemble quantization remain exploratory.
 - Grade allocation is the current live subspace candidate, but the evidence is still mixed and model-dependent even after narrowing to `mlp.c_proj`.
 - Diagonal scaling is a useful baseline, not the main claim.
+- The AWQ-style proxy is a strong comparator, not the main claim.
