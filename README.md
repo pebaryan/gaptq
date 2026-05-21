@@ -51,6 +51,11 @@ The AWQ-style proxy baseline is the strongest current non-GA comparator: it beat
 The GPTQ-style proxy baseline is the harder non-GA comparator: it also beats RTN on both models, but it still trails grade allocation.
 See [docs/results_snapshot.md](docs/results_snapshot.md) for the direct RTN vs grade allocation vs AWQ/GPTQ proxy comparison table.
 
+| Model | RTN | Grade Allocation | AWQ Proxy | GPTQ Proxy |
+|---|---:|---:|---:|---:|
+| `gpt2` | 94.93 | 88.07 | 89.34 | 89.34 |
+| `gpt2-medium` | 55.19 | 53.21 | 54.43 | 54.54 |
+
 ## Benchmark Snapshot
 
 Stable GPT-2 benchmark settings used for the core path:
