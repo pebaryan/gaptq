@@ -27,16 +27,17 @@ Source protocol:
 ## Current Best Comparison
 
 This is the direct side-by-side view of the live GA branch versus the strongest
-in-repo non-GA comparator:
+in-repo non-GA comparators:
 
-| Model | RTN PPL | Grade Allocation PPL | AWQ Proxy PPL | Best of the two |
-|---|---:|---:|---:|---|
-| `gpt2` | 94.93 | 88.07 | 89.34 | Grade allocation |
-| `gpt2-medium` | 55.19 | 53.21 | 54.43 | Grade allocation |
+| Model | RTN PPL | Grade Allocation PPL | AWQ Proxy PPL | GPTQ Proxy PPL | Best of the group |
+|---|---:|---:|---:|---:|---|
+| `gpt2` | 94.93 | 88.07 | 89.34 | 89.34 | Grade allocation |
+| `gpt2-medium` | 55.19 | 53.21 | 54.43 | 54.54 | Grade allocation |
 
 Interpretation:
-- both grade allocation and the AWQ proxy beat RTN on both benchmark models
-- grade allocation still has the edge over the AWQ proxy on both models
+- both grade allocation and the AWQ/GPTQ proxies beat RTN on both benchmark models
+- the GPTQ proxy is essentially tied with the AWQ proxy on `gpt2` and slightly worse on `gpt2-medium`
+- grade allocation still has the edge over both external-style comparators on both models
 - the gap is now small enough that the next question is whether it holds on
   harder models or broader slices
 
@@ -134,6 +135,29 @@ python -m gaptq.quantize_model --experimental --awq-proxy --model gpt2-medium --
 | Did it beat the live grade-allocation branch? | No. Grade allocation still wins on both models, but the margin is smaller. |
 | Was it cheap enough to matter? | Yes. It was much cheaper than the rotor-scale and projection branches. |
 | What does it tell us? | Activation-aware, saliency-driven bit budgeting is a strong non-GA baseline, and grade allocation still has to beat that bar. |
+
+## GPTQ-Style Proxy Baseline
+
+Stable settings used:
+
+```bash
+python -m gaptq.quantize_model --experimental --gptq-proxy --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --gptq-proxy --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | GPTQ Proxy PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 89.34 | 32.1% | 12/12 | 0.5s |
+| `gpt2-medium` | 44.17 | 55.19 | 54.54 | 24.1% | 24/24 | 1.0s |
+
+## GPTQ-Style Proxy Interpretation
+
+| Question | Notes |
+|---|---|
+| Did the proxy beat RTN? | Yes on both `gpt2` and `gpt2-medium`. |
+| Did it beat the AWQ proxy? | It tied AWQ on `gpt2` and was slightly worse on `gpt2-medium`. |
+| Did it beat the live grade-allocation branch? | No. Grade allocation still wins on both models. |
+| What does it tell us? | Hessian-aware saliency is a stronger comparator than RTN, but in this proxy form it still does not displace the current grade-allocation result. |
 
 ## Reflection Baseline
 

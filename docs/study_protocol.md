@@ -217,16 +217,17 @@ or whether it is just a better heuristic than RTN.
 
 ### 7.1 AWQ-style proxy baseline
 
-The repo now has an AWQ-style proxy baseline on `mlp.c_proj`. It is the
-strongest current non-GA comparator in-tree and should be treated as the bar
-for the live grade-allocation branch.
+The repo now has both an AWQ-style proxy baseline and a GPTQ-style proxy
+baseline on `mlp.c_proj`. They are the strongest current non-GA comparators
+in-tree and should be treated as the bar for the live grade-allocation branch.
 
 What the current result says:
 - the AWQ proxy beats RTN on both `gpt2` and `gpt2-medium`
-- grade allocation still beats the AWQ proxy on both models
+- the GPTQ proxy also beats RTN on both `gpt2` and `gpt2-medium`
+- grade allocation still beats both proxies on both models
 - the live question is therefore not whether a stronger baseline exists, but
-  whether grade allocation can continue to beat it on harder slices or larger
-  models
+  whether grade allocation can continue to beat both external-style proxies on
+  harder slices or larger models
 
 Why this baseline matters:
 - it is a strong practical PTQ comparator
@@ -245,20 +246,21 @@ Current diagonal-scaling comparator:
 2. learned rotor
 3. `mlp.c_proj` grade allocation
 4. AWQ-style proxy baseline
-5. rotor plus scaling, only if needed as a hybrid comparison
+5. GPTQ-style proxy baseline
+6. rotor plus scaling, only if needed as a hybrid comparison
 
 ### 7.3 Decision rules
 
 Treat grade allocation as promising if:
 - it beats RTN on both `gpt2` and `gpt2-medium`
-- it stays competitive with the AWQ-style proxy baseline
+- it stays competitive with the AWQ-style proxy and GPTQ-style proxy baselines
 - it remains cheap enough that runtime overhead is minor
 
 Treat it as a heuristic gain if:
-- it beats RTN but loses to the AWQ-style proxy baseline
+- it beats RTN but loses to one or both external-style proxies
 - it only works on `mlp.c_proj`
 - it depends heavily on the current candidate search
 
 Treat it as rejected if:
-- the AWQ-style proxy baseline matches or beats it on both models
+- the external-style proxy baselines match or beat it on both models
 - the gain disappears when the search is simplified

@@ -15,12 +15,17 @@ saliency-weighted mixed-precision comparator. It is not a full AWQ implementatio
 but it is the right external-style baseline to compare against the current live
 grade-allocation branch.
 
+The repo also now contains a GPTQ-style proxy baseline on the same slice. It uses
+Hessian-diagonal saliency instead of activation/weight saliency, which makes it a
+slightly harder comparator than the AWQ proxy.
+
 ## 1. Method Summary
 
 | Method | Core idea | What it is good at | What it suggests for this repo |
 |---|---|---|---|
 | GPTQ | Approximate second-order, one-shot weight quantization | Strong weight-only accuracy at 3-4 bits | Uniform RTN is too weak a baseline; sensitivity-aware weight PTQ should be compared next |
-| AWQ | Activation-aware weight quantization | Low-bit weight-only quantization with activation/outlier awareness | The repo’s grade allocation is conceptually closest to AWQ-style bit budgeting; the new AWQ proxy now serves as the strongest in-repo non-GA comparator |
+| AWQ | Activation-aware weight quantization | Low-bit weight-only quantization with activation/outlier awareness | The repo’s grade allocation is conceptually closest to AWQ-style bit budgeting; the AWQ proxy is the in-repo activation-aware comparator |
+| GPTQ | Approximate second-order, one-shot weight quantization | Strong weight-only accuracy at 3-4 bits | The new GPTQ proxy is the in-repo second-order comparator and the harder baseline for grade allocation |
 | SmoothQuant | Smooth activation outliers by equivalent scaling | W8A8 PTQ and hardware-efficient inference | The repo’s diagonal-scaling baseline is the nearest in spirit, though not the same method |
 | QuaRot | Rotation-based end-to-end 4-bit inference | Rotation plus activation/KV quantization | Rotor-only is not enough; the transform must fit a larger quantization pipeline |
 
@@ -34,6 +39,7 @@ Implication for GAP-TQ:
 - If grade allocation only beats RTN, that is not enough.
 - The next fair comparison is GPTQ or a close approximation to sensitivity-aware weight PTQ.
 - The repo should not read RTN as the real bar for success.
+- The in-repo GPTQ proxy now exists and is a useful hard-mode comparator, but it still does not beat the live grade-allocation branch.
 
 Sources:
 - [GPTQ paper](https://arxiv.org/abs/2210.17323)
@@ -92,7 +98,7 @@ That lines up with the repo’s empirical path:
 
 - rotor-only helped local error but was not consistently enough for perplexity
 - diagonal scaling helped `gpt2` but not `gpt2-medium`
-- the AWQ proxy is the strongest in-repo external-style comparator and beats RTN on both models
+- the AWQ and GPTQ proxies both beat RTN on both models
 - grade allocation on `mlp.c_proj` is still the best live result
 
-So the next benchmark question is no longer whether a stronger external-style comparator exists; it does, and the repo now has one. The open question is whether grade allocation is still genuinely better than the AWQ-style baseline, or whether it is just a heuristic improvement over RTN.
+So the next benchmark question is no longer whether a stronger external-style comparator exists; it does, and the repo now has two. The open question is whether grade allocation is still genuinely better than the external-style baselines, or whether it is just a heuristic improvement over RTN.
