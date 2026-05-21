@@ -49,6 +49,7 @@ Grade allocation on `mlp.c_proj` is the current live subspace candidate. The bro
 The diagonal-scaling baseline is a useful comparator: it improved `gpt2`, but it did not hold up on `gpt2-medium`.
 The AWQ-style proxy baseline is the strongest current non-GA comparator: it beats RTN on both benchmark models, but grade allocation still beats it on both.
 The GPTQ-style proxy baseline is the harder non-GA comparator: it also beats RTN on both models, but it still trails grade allocation.
+On `gpt2-large`, grade allocation still leads, but the margin over AWQ/GPTQ proxies is narrower.
 See [docs/results_snapshot.md](docs/results_snapshot.md) for the direct RTN vs grade allocation vs AWQ/GPTQ proxy comparison table.
 
 | Model | RTN | Grade Allocation | AWQ Proxy | GPTQ Proxy |

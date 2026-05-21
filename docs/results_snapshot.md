@@ -41,6 +41,19 @@ Interpretation:
 - the gap is now small enough that the next question is whether it holds on
   harder models or broader slices
 
+## Large-Model Generalization
+
+This is the same comparison on `gpt2-large` with the same stable settings:
+
+| Model | RTN PPL | Grade Allocation PPL | AWQ Proxy PPL | GPTQ Proxy PPL | Best of the group |
+|---|---:|---:|---:|---:|---|
+| `gpt2-large` | 43.49 | 41.17 | 41.78 | 41.78 | Grade allocation |
+
+Interpretation:
+- the grade-allocation branch still beats RTN on the harder `gpt2-large` model
+- the AWQ and GPTQ proxies also beat RTN, but they remain slightly behind grade allocation
+- the gap narrows compared with `gpt2` and `gpt2-medium`, which suggests the current gain is real but not dramatically larger at scale
+
 ## Grade Allocation
 
 Current live slice:
