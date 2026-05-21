@@ -967,6 +967,8 @@ def quantize_weight_with_grade_allocation(
     calibration_inputs: Optional[torch.Tensor] = None,
     calibration_targets: Optional[torch.Tensor] = None,
     calibration_train_frac: float = 0.8,
+    layer_index: Optional[int] = None,
+    total_layers: Optional[int] = None,
     candidate_bit_maps: Optional[List[Dict]] = None,
     bit_cost_weight: float = 1e-3,
     verbose: bool = False,
@@ -986,13 +988,40 @@ def quantize_weight_with_grade_allocation(
         from .experimental.per_grade_quant import quantize_per_grade, _avg_bit_width
 
     if candidate_bit_maps is None:
-        candidate_bit_maps = [
-            {0: 4, 2: 4, "strain": 4},
-            {0: 8, 2: 4, "strain": 4},
-            {0: 8, 2: 4, "strain": 6},
-            {0: 8, 2: 3, "strain": 6},
-            {0: 16, 2: 4, "strain": 8},
-        ]
+        if layer_index is not None and total_layers is not None and total_layers > 0:
+            depth = layer_index / max(total_layers - 1, 1)
+            if depth < 0.33:
+                candidate_bit_maps = [
+                    {0: 4, 2: 4, "strain": 4},
+                    {0: 8, 2: 4, "strain": 4},
+                    {0: 8, 2: 4, "strain": 6},
+                    {0: 8, 2: 3, "strain": 6},
+                    {0: 16, 2: 4, "strain": 8},
+                ]
+            elif depth < 0.67:
+                candidate_bit_maps = [
+                    {0: 8, 2: 4, "strain": 4},
+                    {0: 8, 2: 4, "strain": 6},
+                    {0: 8, 2: 3, "strain": 6},
+                    {0: 16, 2: 4, "strain": 8},
+                    {0: 16, 2: 3, "strain": 8},
+                ]
+            else:
+                candidate_bit_maps = [
+                    {0: 8, 2: 4, "strain": 6},
+                    {0: 8, 2: 3, "strain": 6},
+                    {0: 16, 2: 4, "strain": 8},
+                    {0: 16, 2: 3, "strain": 8},
+                    {0: 16, 2: 4, "strain": 10},
+                ]
+        else:
+            candidate_bit_maps = [
+                {0: 4, 2: 4, "strain": 4},
+                {0: 8, 2: 4, "strain": 4},
+                {0: 8, 2: 4, "strain": 6},
+                {0: 8, 2: 3, "strain": 6},
+                {0: 16, 2: 4, "strain": 8},
+            ]
 
     x_fit, y_fit, x_val, y_val = _split_calibration_rows(
         calibration_inputs, calibration_targets, train_frac=calibration_train_frac
@@ -1037,6 +1066,8 @@ def quantize_weight_with_grade_allocation(
         "time": time.time() - t0,
         "in_dim": W.shape[1],
         "out_dim": W.shape[0],
+        "layer_index": layer_index,
+        "total_layers": total_layers,
         "bit_map": {str(k): v for k, v in best_map.items()},
         "avg_bits": best_bits,
         "selection_loss": best_loss,
@@ -1575,7 +1606,7 @@ def main():
                         help="Experimental: calibration-guided grade-aware bit allocation")
     parser.add_argument("--grade-alloc-regex", type=str, default=r"mlp\.c_proj$",
                         help="Regex for layers eligible for grade-aware allocation")
-    parser.add_argument("--grade-bit-cost", type=float, default=1e-3,
+    parser.add_argument("--grade-bit-cost", type=float, default=1e-2,
                         help="Penalty weight for larger average bit maps in grade allocation")
     parser.add_argument("--hotspot-steps", type=int, default=0,
                         help="Optional extra optimization steps for hotspot projection layers")
@@ -1636,6 +1667,7 @@ def main():
     n_params = sum(p.numel() for p in model.parameters())
     exclude_emb = not args.quantize_lm_head
     layers = get_linear_layers(model, exclude_embeddings=exclude_emb)
+    layer_positions = {name: (idx, len(layers)) for idx, (name, _, _) in enumerate(layers)}
     print(f"Parameters: {n_params:,}")
     print(f"Linear/Conv1D layers: {len(layers)} "
           f"({'skipping lm_head' if exclude_emb else 'including lm_head'})")
@@ -1804,11 +1836,14 @@ def main():
                     cal_tgt = cal_tgt.to(W.device, dtype=W.dtype)
                 if layer_name is not None and not re.search(args.grade_alloc_regex, layer_name):
                     return quantize_weight_rtn(W, n_bits=n_bits)
+                layer_index, total_layers = layer_positions.get(layer_name, (None, None))
                 return quantize_weight_with_grade_allocation(
                     W,
                     n_bits=n_bits,
                     calibration_inputs=cal_in,
                     calibration_targets=cal_tgt,
+                    layer_index=layer_index,
+                    total_layers=total_layers,
                     bit_cost_weight=args.grade_bit_cost,
                     verbose=False,
                 )

@@ -35,8 +35,8 @@ python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 
 
 | Model | FP16 PPL | RTN PPL | Grade Allocation PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
 |---|---:|---:|---:|---:|---:|---:|
-| `gpt2` | 61.76 | 94.93 | 88.10 | 61.2% | 12/12 | 0.8s |
-| `gpt2-medium` | 44.17 | 55.19 | 53.43 | 60.3% | 24/24 | 1.8s |
+| `gpt2` | 61.76 | 94.93 | 88.07 | 59.4% | 12/12 | 0.8s |
+| `gpt2-medium` | 44.17 | 55.19 | 53.21 | 58.7% | 24/24 | 1.7s |
 
 Broad slice used as a comparison point:
 
