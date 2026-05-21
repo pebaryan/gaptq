@@ -48,6 +48,7 @@ The next live subspace experiment is no longer the low-rank residual model. The 
 Grade allocation on `mlp.c_proj` is the current live subspace candidate. The broader `(?:attn|mlp)\.c_proj$` slice was superseded by the MLP-only slice, and the attention-only slice was rejected.
 The diagonal-scaling baseline is a useful comparator: it improved `gpt2`, but it did not hold up on `gpt2-medium`.
 The AWQ-style proxy baseline is the strongest current non-GA comparator: it beats RTN on both benchmark models, but grade allocation still beats it on both.
+See [docs/results_snapshot.md](docs/results_snapshot.md) for the direct RTN vs grade allocation vs AWQ proxy comparison table.
 
 ## Benchmark Snapshot
 

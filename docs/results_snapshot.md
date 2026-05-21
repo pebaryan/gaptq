@@ -24,6 +24,22 @@ Source protocol:
 | `gpt2` | 61.76 | 94.93 | 87.56 | 4.6% | 46/48 | 123.1s |
 | `gpt2-medium` | 44.17 | 55.19 | 55.16 | 4.4% | 89/96 | 408.6s |
 
+## Current Best Comparison
+
+This is the direct side-by-side view of the live GA branch versus the strongest
+in-repo non-GA comparator:
+
+| Model | RTN PPL | Grade Allocation PPL | AWQ Proxy PPL | Best of the two |
+|---|---:|---:|---:|---|
+| `gpt2` | 94.93 | 88.07 | 89.34 | Grade allocation |
+| `gpt2-medium` | 55.19 | 53.21 | 54.43 | Grade allocation |
+
+Interpretation:
+- both grade allocation and the AWQ proxy beat RTN on both benchmark models
+- grade allocation still has the edge over the AWQ proxy on both models
+- the gap is now small enough that the next question is whether it holds on
+  harder models or broader slices
+
 ## Grade Allocation
 
 Current live slice:
