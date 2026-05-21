@@ -3,6 +3,7 @@
 This is the decision document for the PTQ study.
 
 For the literature review, see [literature_review.md](literature_review.md).
+For the external PTQ comparison, see [external_ptq_comparison.md](external_ptq_comparison.md).
 For the broader GA study direction, see [ga_research_track.md](ga_research_track.md).
 For the execution protocol, see [study_protocol.md](study_protocol.md).
 For the executable GA diagnostics, see [gaptq/experimental/ga_analysis.py](../gaptq/experimental/ga_analysis.py).

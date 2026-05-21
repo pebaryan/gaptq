@@ -6,6 +6,7 @@ The useful part of the project is the learned rotation. The geometric-algebra no
 
 For the research framing, see [docs/research_roadmap.md](docs/research_roadmap.md).
 For the literature review, see [docs/literature_review.md](docs/literature_review.md).
+For the external PTQ comparison, see [docs/external_ptq_comparison.md](docs/external_ptq_comparison.md).
 For GA beyond rotation, see [docs/ga_research_track.md](docs/ga_research_track.md).
 
 ## What the core path does

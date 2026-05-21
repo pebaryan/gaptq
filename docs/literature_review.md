@@ -4,6 +4,8 @@ This is an early review of the PTQ problem as it relates to this repo.
 
 The goal is not to list every paper. The goal is to identify the main pressure points in PTQ and what each major family of methods is actually solving.
 
+For a concise side-by-side comparison with the external methods most relevant to this repo, see [external_ptq_comparison.md](external_ptq_comparison.md).
+
 ## 0. PTQ Methods At a Glance
 
 | Method | Main lever | What it mainly fixes | Typical tradeoff | Relevance to rotors |

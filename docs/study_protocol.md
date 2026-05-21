@@ -6,6 +6,7 @@ Use it when you are actually running experiments and recording results.
 
 For background, see:
 - [literature_review.md](literature_review.md)
+- [external_ptq_comparison.md](external_ptq_comparison.md)
 - [research_roadmap.md](research_roadmap.md)
 - [results_template.md](results_template.md)
 - [results_snapshot.md](results_snapshot.md)
