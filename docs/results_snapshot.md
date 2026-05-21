@@ -24,6 +24,70 @@ Source protocol:
 | `gpt2` | 61.76 | 94.93 | 87.56 | 4.6% | 46/48 | 123.1s |
 | `gpt2-medium` | 44.17 | 55.19 | 55.16 | 4.4% | 89/96 | 408.6s |
 
+## Grade Allocation
+
+Default live slice used:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | Grade Allocation PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 95.49 | 35.0% | 22/24 | 1.1s |
+| `gpt2-medium` | 44.17 | 55.19 | 53.60 | 27.5% | 38/48 | 2.2s |
+
+Attention-only slice used for rejection:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'attn\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'attn\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | Grade Allocation PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 102.18 | 8.7% | 10/12 | 0.8s |
+| `gpt2-medium` | 44.17 | 55.19 | 55.36 | -5.2% | 14/24 | 1.4s |
+
+## Grade Allocation Interpretation
+
+| Question | Notes |
+|---|---|
+| Did the broad slice improve perplexity? | Yes on `gpt2-medium`, no on `gpt2`. |
+| Did the attention-only slice improve perplexity? | No. It regressed on both models. |
+| Did NMSE improvement predict perplexity? | Only partially. Local gains were real, but they did not transfer cleanly. |
+| Was the transform cheap enough? | Yes. It was much cheaper than the rotor-scale or projection branches. |
+| Does this justify more work? | Yes, but only on the broad projection-heavy slice. The attention-only slice is a rejection. |
+
+## Reflection Baseline
+
+Stable settings used:
+
+```bash
+python -m gaptq.quantize_model --experimental --reflection --model gpt2 --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64 --skip-rtn
+python -m gaptq.quantize_model --experimental --reflection --model gpt2-medium --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64 --skip-rtn
+```
+
+| Model | FP16 PPL | RTN PPL | Reflection PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 92.26 | 0.0% | 30/48 | 0.6s |
+| `gpt2-medium` | 44.17 | 55.19 | 57.05 | 0.0% | 65/96 | 1.8s |
+
+## Projection + Residual Model
+
+Stable settings used:
+
+```bash
+python -m gaptq.quantize_model --experimental --projection-residual-model --model gpt2 --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --projection-residual-model --model gpt2-medium --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | Projection + Residual Model PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 2106.30 | -682.7% | 11/24 | 238.3s |
+| `gpt2-medium` | 44.17 | 55.19 | 2573.19 | -1240.7% | 0/48 | 974.9s |
+
 ## Layer Notes
 
 | Layer family | Observation |
@@ -39,12 +103,18 @@ Source protocol:
 | Question | Notes |
 |---|---|
 | Did the method improve perplexity? | Yes on `gpt2`, essentially tied on `gpt2-medium`. |
-| Did NMSE improvement predict perplexity? | Only partially. NMSE improved broadly, but perplexity gains were smaller. |
-| Was the transform cheap enough? | It was feasible, but noticeably slower on `gpt2-medium`. |
-| Would this justify scaling / clipping / more grouping? | Yes. The current result suggests a hybrid method is worth testing. |
+| Did NMSE improvement predict perplexity? | Only partially for the rotor path. Reflection did not translate into better perplexity. |
+| Was the transform cheap enough? | Reflection was cheap, but not useful end to end. |
+| Would this justify scaling / clipping / more grouping? | Yes. The rotor+scaling path is the more credible hybrid direction. |
+
+| Question | Notes |
+|---|---|
+| Did the method improve perplexity? | No. It catastrophically worsened perplexity on both models. |
+| Did NMSE improvement predict perplexity? | No. The low-rank residual correction overfit the calibration objective. |
+| Was the transform cheap enough? | No. It was much slower than the rotor path and still failed. |
+| Would this justify more work on the same branch? | No. Keep it archived unless the residual objective changes materially. |
 
 ## Local Notes
 
 - Keep machine-specific `scabi` commands in [local_scabi.md](local_scabi.md).
 - Do not treat this file as the final result section; it is a living snapshot.
-

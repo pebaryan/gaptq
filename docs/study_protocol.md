@@ -16,6 +16,8 @@ The study asks whether a learned orthogonal basis change, parameterized as a rot
 
 The key question is not whether the rotor lowers local error. The question is whether it improves task behavior after quantization.
 
+The current projection-residual branch is not part of the active path. It is kept as an archived negative result because it can reduce local error without improving perplexity reliably.
+
 ## 2. Fixed Settings
 
 Use these settings for the core runs unless a subsection says otherwise:
@@ -72,16 +74,72 @@ Record:
 - perplexity change
 - whether rotor gains are concentrated in one module family
 
-### 3.4 Rotor plus scaling
+### 3.4 Grade allocation
+
+This is the current live subspace candidate.
+
+Run the broad projection-heavy slice first:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+Record:
+- whether grade allocation improves perplexity versus RTN
+- whether the gain survives on `gpt2-medium`
+- whether the effect is concentrated in `c_proj` layers
+- whether an attention-only slice is clearly worse
+
+Then run the attention-only slice as a rejection check:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'attn\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'attn\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+### 3.5 Reflection baseline
+
+Run the Householder reflection baseline after the rotor pass:
+
+```bash
+python -m gaptq.quantize_model --experimental --reflection --model gpt2 --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --reflection --model gpt2-medium --n-bits 4 --n-steps 1 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+Record:
+- whether reflection improves perplexity versus RTN
+- whether it beats rotor on the same layers
+- whether it is cheaper or more stable than the rotor path
+
+### 3.6 Projection + residual model archive
+
+The explicit residual-model branch is now archived as a negative result.
+
+It showed that:
+- the low-rank residual can fit the calibration split
+- that fit can still overfit badly
+- the extra factorization is expensive relative to the rotor path
+
+Do not continue this branch as written unless the residual objective changes materially.
+
+### 3.7 Rotor plus scaling
 
 Only run this after the learned rotor has shown enough promise to justify another moving part.
+
+Run:
+
+```bash
+python -m gaptq.quantize_model --experimental --rotor-scale --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --rotor-scale --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
 
 Record:
 - whether scaling improves perplexity
 - whether scaling reduces variance across layers
 - whether the extra complexity is justified
 
-### 3.5 Model-size sensitivity
+### 3.8 Model-size sensitivity
 
 Repeat the chosen best method on `gpt2-medium`.
 
@@ -90,7 +148,7 @@ Record:
 - whether larger depth weakens the method
 - whether the method stays stable on harder layers
 
-### 3.6 Slice study
+### 3.9 Slice study
 
 Run attention-only and MLP-only variants if exposed in code.
 
@@ -125,3 +183,5 @@ The rotor idea only becomes a serious PTQ result if the benchmark shows at least
 - lower perplexity
 - more robust behavior across models
 - a clear pathway to a better hybrid method, such as rotor plus scaling
+
+Do not continue the existing projection-residual implementation unless you change the objective or the transform family in a material way.

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Quantization Diagram</title>
+    <style>
+      html, body {
+        margin: 0;
+        width: 100%;
+        min-height: 100%;
+        background: #0f172a;
+      }
+      body {
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        box-sizing: border-box;
+      }
+      img {
+        width: min(1400px, 100%);
+        height: auto;
+        display: block;
+        border-radius: 16px;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.35);
+        background: #0f172a;
+      }
+    </style>
+  </head>
+  <body>
+    <img src="/docs/quantization_diagram.svg" alt="Diagram of model weights being split into blocks and packed into compressed GGUF-style formats" />
+  </body>
+</html>

@@ -3,7 +3,9 @@
 This is the decision document for the PTQ study.
 
 For the literature review, see [literature_review.md](literature_review.md).
+For the broader GA study direction, see [ga_research_track.md](ga_research_track.md).
 For the execution protocol, see [study_protocol.md](study_protocol.md).
+For the executable GA diagnostics, see [gaptq/experimental/ga_analysis.py](../gaptq/experimental/ga_analysis.py).
 
 The core question is not whether quantization reduces model size. That is already obvious. The real question is:
 
@@ -40,6 +42,25 @@ They are less compelling when:
 - scaling or clipping would solve the issue more directly
 - the transform is too expensive or too expressive
 - the local reconstruction loss does not correlate with perplexity
+
+For a broader GA framing beyond rotation, see [ga_research_track.md](ga_research_track.md).
+
+### Projection-residual status
+
+The current projection-residual branch is now treated as a negative result:
+
+- it can be made task-aware at rank selection time
+- it reduces local reconstruction error strongly
+- it still does not improve perplexity reliably on `gpt2` or `gpt2-medium`
+
+Keep it as an archived comparison point. Do not spend further study budget on this exact implementation unless the objective changes materially.
+
+### Grade-allocation status
+
+The current live subspace candidate is grade-aware allocation on projection-heavy layers.
+The broad `(?:attn|mlp)\.c_proj$` slice improved `gpt2-medium` modestly, but an
+attention-only slice regressed. Treat this as the next active PTQ branch, but not yet
+as a validated method.
 
 ## 3. First research hypotheses for rotors
 
@@ -112,7 +133,10 @@ This is the concrete study grid for the next round of work.
 | RTN | Direct weight quantization | How far does naive quantization go? |
 | Fixed orthogonal | Hadamard or random orthogonal basis change | Does a non-learned basis already help? |
 | Learned rotor | Blockwise learned orthogonal preconditioning | Can a learned basis change improve PTQ? |
+| Learned reflection | Householder reflection preconditioning | Archived comparison point; does a cheaper GA transform help? |
 | Learned rotor + scaling | Rotor combined with channel scaling | Does scaling close the gap to stronger PTQ? |
+| Grade allocation | Grade-aware bit allocation on projection-heavy layers | Can geometric structure guide precision allocation better than fixed bit maps? |
+| Projection + residual model | Projection onto a subspace with explicit residual handling | Can subspace splitting be made task-aware enough to matter? |
 
 ### 5.2 Metrics to record
 
@@ -152,6 +176,7 @@ Treat it as exploratory if:
 - it improves NMSE but not perplexity
 - it only helps on one model size
 - it depends on an expensive transform that is hard to deploy
+- it is an archived comparison point rather than a live candidate
 
 ## 6. Execution Checklist
 
@@ -232,6 +257,53 @@ Record:
 
 Pass condition:
 - scaling improves end-to-end quality without making the method too expensive
+
+### 6.4b Projection-residual archive
+
+Do not continue the current projection-residual line as a mainline PTQ method.
+
+What it already showed:
+- projection on calibration covariance is locally effective
+- task-aware rank selection is better than reconstruction-based selection
+- local gains still do not translate into better perplexity
+
+If this line returns, it should be as a new method family with a different objective, not as a continuation of the current branch.
+
+### 6.4c Projection + residual model archive
+
+This branch is now archived as a negative result.
+
+It showed:
+- the residual correction can be fit on the calibration data
+- the calibration fit can still blow up perplexity
+- the extra factorization is too expensive to justify as written
+
+If you revisit this idea, it should be with a materially different residual objective, not the current low-rank correction.
+
+The next live subspace experiment should instead focus on either:
+- a more constrained grade-aware allocation scheme, or
+- a smaller, task-aware subspace transform with a stronger regularizer
+
+### 6.4d Grade allocation study
+
+This is the current live candidate.
+
+Run the broad projection-heavy slice first:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+Record:
+- whether grade allocation improves perplexity versus RTN
+- whether the effect survives scale-up to `gpt2-medium`
+- whether the gain is concentrated in `c_proj` layers
+- whether an attention-only slice is clearly worse
+
+Pass condition:
+- a broad, geometry-aware grade allocation beats RTN on at least one model without
+  becoming slower or more brittle than the learned rotor path
 
 ### 6.5 Model-size sensitivity
 

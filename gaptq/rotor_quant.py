@@ -12,19 +12,38 @@ Supports two rotation modes:
 This provides a *learnable* alternative to the fixed Hadamard rotations in QuaRot.
 """
 
-from typing import Literal, Optional
+from typing import Literal, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
 
 from .ga import (
     CliffordAlgebra,
+    RandomReflectionTransform,
     RandomRotorTransform,
     block_diag_rotor_matrix,
     bivector_exp,
+    householder_reflection_matrix,
     grade_decompose,
 )
 from .quantization import UniformQuantizer, quantization_error
+
+
+def _expand_pair_scale(scale: Optional[torch.Tensor], dim: int) -> Optional[torch.Tensor]:
+    """Expand pairwise scale coefficients to per-dimension scale factors."""
+    if scale is None:
+        return None
+    if scale.numel() == dim:
+        return scale
+    n_pairs = dim // 2
+    if scale.numel() == n_pairs:
+        expanded = scale.repeat_interleave(2)
+        if dim % 2 == 1:
+            expanded = torch.cat(
+                [expanded, torch.ones(1, device=scale.device, dtype=scale.dtype)]
+            )
+        return expanded
+    raise ValueError(f"Unsupported scale length {scale.numel()} for dim={dim}")
 
 
 def optimize_rotor_angles(
@@ -63,6 +82,105 @@ def optimize_rotor_angles(
         return _optimize_full_rotor(W, n_bits, n_iterations, lr, verbose, n_restarts)
     else:
         return _optimize_block_rotor(W, n_bits, n_iterations, lr, verbose, n_restarts)
+
+
+def optimize_reflection_vector(
+    W: torch.Tensor,
+    n_bits: int = 4,
+    n_iterations: int = 200,
+    lr: float = 0.05,
+    verbose: bool = False,
+    n_restarts: int = 3,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    calibration_targets: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Optimize a Householder reflection direction for quantization.
+
+    Uses gradient descent over a single direction vector u defining
+    H = I - 2uu^T. If calibration data is provided, minimizes output MSE on
+    the calibration set; otherwise minimizes weight reconstruction MSE.
+    """
+    device = W.device
+    dim = W.shape[1]
+
+    if dim <= 1:
+        return torch.randn(dim, device=device)
+
+    best_vector = None
+    best_loss = float("inf")
+    n_trials = n_restarts if dim > 1 else 1
+
+    for trial in range(n_trials):
+        transform = RandomReflectionTransform(dim, requires_grad=True).to(device)
+        optimizer = torch.optim.Adam([transform.vector], lr=lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=n_iterations
+        )
+
+        for step in range(n_iterations):
+            optimizer.zero_grad()
+
+            H = householder_reflection_matrix(transform.vector)
+            W_reflected = W @ H.T
+            W_q = UniformQuantizer(n_bits, symmetric=True, per_channel=True)(W_reflected)
+            W_deq = W_q @ H
+
+            if calibration_inputs is not None and calibration_targets is not None:
+                pred = calibration_inputs @ W_deq.T
+                loss = F.mse_loss(pred, calibration_targets)
+            else:
+                loss = F.mse_loss(W_deq, W)
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            if verbose and (step + 1) % 50 == 0:
+                print(f"  [reflect] Trial {trial+1}, Step {step+1}: loss = {loss.item():.6f}")
+
+        with torch.no_grad():
+            H = householder_reflection_matrix(transform.vector)
+            W_reflected = W @ H.T
+            W_q = UniformQuantizer(n_bits, symmetric=True, per_channel=True)(W_reflected)
+            W_deq = W_q @ H
+            if calibration_inputs is not None and calibration_targets is not None:
+                final_loss = F.mse_loss(calibration_inputs @ W_deq.T, calibration_targets).item()
+            else:
+                final_loss = F.mse_loss(W_deq, W).item()
+
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_vector = transform.vector.detach().clone()
+            if verbose:
+                print(f"  [reflect] -> New best: loss = {final_loss:.6f}")
+
+    if verbose:
+        print(f"Reflection optimization complete. Best loss: {best_loss:.6f}")
+
+    return best_vector
+
+
+def get_optimal_reflection(
+    W: torch.Tensor,
+    n_bits: int = 4,
+    n_optimization_steps: int = 200,
+    verbose: bool = False,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    calibration_targets: Optional[torch.Tensor] = None,
+    n_restarts: int = 3,
+) -> torch.Tensor:
+    """Get the optimal Householder reflection matrix for quantization."""
+    dim = W.shape[1]
+    params = optimize_reflection_vector(
+        W,
+        n_bits=n_bits,
+        n_iterations=n_optimization_steps,
+        verbose=verbose,
+        n_restarts=n_restarts,
+        calibration_inputs=calibration_inputs,
+        calibration_targets=calibration_targets,
+    )
+    return householder_reflection_matrix(params)
 
 
 def _optimize_block_rotor(
@@ -271,6 +389,145 @@ def get_optimal_rotation(
         return bivector_exp(B)
     else:
         return block_diag_rotor_matrix(params, dim)
+
+
+def apply_rotor_scale(
+    W: torch.Tensor,
+    R: torch.Tensor,
+    scale: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Apply optional input-space scaling followed by a rotor."""
+    scale = _expand_pair_scale(scale, W.shape[1])
+    if scale is None:
+        return W @ R.T
+    return (W * scale.unsqueeze(0)) @ R.T
+
+
+def finalize_rotor_scale(
+    W_q: torch.Tensor,
+    R: torch.Tensor,
+    scale: Optional[torch.Tensor] = None,
+) -> torch.Tensor:
+    """Undo the rotor and optional scaling after quantization."""
+    scale = _expand_pair_scale(scale, W_q.shape[1])
+    W_out = W_q @ R
+    if scale is None:
+        return W_out
+    inv_scale = (1.0 / scale.clamp(min=1e-4)).unsqueeze(0)
+    return W_out * inv_scale
+
+
+def optimize_rotor_scale(
+    W: torch.Tensor,
+    n_bits: int = 4,
+    n_optimization_steps: int = 200,
+    lr: float = 0.05,
+    verbose: bool = False,
+    n_restarts: int = 2,
+    calibration_inputs: Optional[torch.Tensor] = None,
+    calibration_targets: Optional[torch.Tensor] = None,
+    learn_scale: bool = True,
+    scale_reg: float = 5e-3,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Optimize block-diagonal rotor angles plus diagonal scaling.
+
+    If calibration data is provided, minimize output MSE on the calibration
+    set; otherwise minimize weight reconstruction MSE.
+    """
+    device = W.device
+    dim = W.shape[1]
+    n_rotors = dim // 2
+    n_trials = n_restarts if n_rotors > 1 else 1
+    has_scale = learn_scale and dim > 1
+    n_scale = dim // 2
+
+    best_angles = None
+    best_scale = None
+    best_loss = float("inf")
+
+    for trial in range(n_trials):
+        transform = RandomRotorTransform(dim, requires_grad=True).to(device)
+        params = [transform.angles]
+        log_scale = None
+        if has_scale:
+            log_scale = torch.nn.Parameter(torch.zeros(n_scale, device=device))
+            params.append(log_scale)
+
+        optimizer = torch.optim.Adam(params, lr=lr)
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=n_optimization_steps
+        )
+
+        for step in range(n_optimization_steps):
+            optimizer.zero_grad()
+
+            R = block_diag_rotor_matrix(transform.angles, dim)
+            scale = None
+            if log_scale is not None:
+                pair_scale = torch.exp(log_scale - log_scale.mean()).clamp(0.75, 1.33)
+                scale = _expand_pair_scale(pair_scale, dim)
+
+            W_rotated = apply_rotor_scale(W, R, scale)
+            q = UniformQuantizer(n_bits, symmetric=True, per_channel=True)
+            W_q = q(W_rotated)
+            W_final = finalize_rotor_scale(W_q, R, scale)
+
+            if calibration_inputs is not None and calibration_targets is not None:
+                pred = calibration_inputs @ W_final.T
+                loss = F.mse_loss(pred, calibration_targets)
+            else:
+                loss = F.mse_loss(W_final, W)
+
+            if log_scale is not None:
+                loss = loss + scale_reg * (log_scale ** 2).mean()
+
+            loss.backward()
+            optimizer.step()
+            scheduler.step()
+
+            if verbose and (step + 1) % 50 == 0:
+                print(f"  Trial {trial+1}, Step {step+1}: loss = {loss.item():.6f}")
+
+        with torch.no_grad():
+            R = block_diag_rotor_matrix(transform.angles, dim)
+            scale = None
+            if log_scale is not None:
+                pair_scale = torch.exp(log_scale - log_scale.mean()).clamp(0.75, 1.33)
+                scale = _expand_pair_scale(pair_scale, dim)
+
+            q = UniformQuantizer(n_bits, symmetric=True, per_channel=True)
+            W_rotated = apply_rotor_scale(W, R, scale)
+            W_q = q(W_rotated)
+            W_final = finalize_rotor_scale(W_q, R, scale)
+
+            if calibration_inputs is not None and calibration_targets is not None:
+                pred = calibration_inputs @ W_final.T
+                final_loss = F.mse_loss(pred, calibration_targets).item()
+            else:
+                final_loss = F.mse_loss(W_final, W).item()
+
+        if final_loss < best_loss:
+            best_loss = final_loss
+            best_angles = transform.angles.detach().clone()
+            best_scale = (
+                _expand_pair_scale(
+                    torch.exp(log_scale - log_scale.mean()).detach().clone().clamp(0.75, 1.33),
+                    dim,
+                )
+                if log_scale is not None
+                else torch.ones(dim, device=device)
+            )
+            if verbose:
+                print(f"  -> New best: loss = {final_loss:.6f}")
+
+    if best_angles is None:
+        best_angles = torch.zeros(n_rotors, device=device)
+    if best_scale is None:
+        best_scale = torch.ones(dim, device=device)
+
+    if verbose:
+        print(f"Optimization complete. Best loss: {best_loss:.6f}")
+    return best_angles, best_scale
 
 
 class RotorQuaRot(torch.nn.Module):

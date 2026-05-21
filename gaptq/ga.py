@@ -567,6 +567,21 @@ def block_diag_rotor_matrix(
     return torch.block_diag(*blocks)
 
 
+def householder_reflection_matrix(vector: torch.Tensor) -> torch.Tensor:
+    """Build a Householder reflection matrix from a learned direction vector.
+
+    The reflection is H = I - 2 uu^T, where u is the normalized input vector.
+    This is an orthogonal transform with determinant -1.
+    """
+    dim = vector.shape[-1]
+    if dim < 2:
+        return torch.eye(dim, dtype=vector.dtype, device=vector.device)
+
+    u = vector / vector.norm().clamp(min=1e-8)
+    eye = torch.eye(dim, dtype=vector.dtype, device=vector.device)
+    return eye - 2.0 * torch.outer(u, u)
+
+
 # ─── Full matrix rotor operations (from gamuon, adapted) ──────────────
 
 
@@ -713,3 +728,35 @@ class RandomRotorTransform(nn.Module):
     def get_matrix(self) -> torch.Tensor:
         """Get the full block-diagonal rotation matrix."""
         return block_diag_rotor_matrix(self.angles, self.dim)
+
+
+class RandomReflectionTransform(nn.Module):
+    """A learnable Householder reflection transform.
+
+    This parameterizes a single reflection H = I - 2uu^T, which can be learned
+    by optimizing the direction vector u from calibration data.
+    """
+
+    def __init__(self, dim: int, requires_grad: bool = False):
+        super().__init__()
+        self.dim = dim
+        vector = torch.randn(dim)
+        self.vector = nn.Parameter(vector, requires_grad=requires_grad)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply the reflection to a tensor."""
+        H = householder_reflection_matrix(self.vector)
+        if x.ndim == 1:
+            return H @ x
+        return x @ H.T
+
+    def inverse(self, x: torch.Tensor) -> torch.Tensor:
+        """A Householder reflection is its own inverse."""
+        H = householder_reflection_matrix(self.vector)
+        if x.ndim == 1:
+            return H @ x
+        return x @ H.T
+
+    def get_matrix(self) -> torch.Tensor:
+        """Get the reflection matrix."""
+        return householder_reflection_matrix(self.vector)

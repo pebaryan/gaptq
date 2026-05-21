@@ -1,0 +1,196 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1540" height="860" viewBox="0 0 1540 860" fill="none">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1540" y2="860" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b1020"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#172033"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+    <linearGradient id="rotorGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#22c55e"/>
+      <stop offset="1" stop-color="#16a34a"/>
+    </linearGradient>
+    <linearGradient id="qgrad" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#0284c7"/>
+    </linearGradient>
+    <linearGradient id="packGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#f59e0b"/>
+      <stop offset="1" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="inferGrad" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#a78bfa"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="12" stdDeviation="20" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M0,0 L12,6 L0,12 z" fill="#e5e7eb"/>
+    </marker>
+    <style>
+      .title { font: 700 30px/1.2 Inter, Segoe UI, Arial, sans-serif; fill: #f8fafc; }
+      .subtitle { font: 500 15px/1.4 Inter, Segoe UI, Arial, sans-serif; fill: #cbd5e1; }
+      .label { font: 700 18px/1.2 Inter, Segoe UI, Arial, sans-serif; fill: #e2e8f0; }
+      .small { font: 500 13px/1.4 Inter, Segoe UI, Arial, sans-serif; fill: #cbd5e1; }
+      .tiny { font: 500 12px/1.2 Inter, Segoe UI, Arial, sans-serif; fill: #d1d5db; }
+      .mono { font: 600 12px/1.4 Consolas, Menlo, monospace; fill: #e2e8f0; }
+      .chip { font: 700 13px/1.2 Inter, Segoe UI, Arial, sans-serif; fill: #0f172a; }
+      .box { rx: 22; ry: 22; }
+    </style>
+  </defs>
+
+  <rect width="1540" height="860" fill="url(#bg)"/>
+  <text x="70" y="62" class="title">JPEG-Style Pipeline for Model Weights</text>
+  <text x="70" y="90" class="subtitle">Transform, quantize, pack, then reconstruct locally during inference</text>
+
+  <!-- Panels -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="140" width="265" height="420" class="box" fill="url(#panel)" stroke="#475569" stroke-width="2"/>
+    <rect x="395" y="140" width="265" height="420" class="box" fill="url(#panel)" stroke="#475569" stroke-width="2"/>
+    <rect x="730" y="140" width="265" height="420" class="box" fill="url(#panel)" stroke="#475569" stroke-width="2"/>
+    <rect x="1065" y="140" width="265" height="420" class="box" fill="url(#panel)" stroke="#475569" stroke-width="2"/>
+    <rect x="1400" y="140" width="80" height="420" class="box" fill="url(#panel)" stroke="#475569" stroke-width="2"/>
+  </g>
+
+  <!-- Panel titles -->
+  <text x="82" y="176" class="label">1. Float Weights</text>
+  <text x="417" y="176" class="label">2. Rotor / Scale</text>
+  <text x="752" y="176" class="label">3. Quantize</text>
+  <text x="1087" y="176" class="label">4. Pack</text>
+  <text x="1418" y="176" class="label">5. Infer</text>
+
+  <!-- 1: weight matrix -->
+  <g transform="translate(84,214)">
+    <rect x="0" y="0" width="216" height="240" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="108" y="22" text-anchor="middle" class="small">Dense weights</text>
+    <g transform="translate(20,36)">
+      <rect x="0" y="0" width="176" height="176" rx="14" fill="#111827" stroke="#334155" stroke-width="1"/>
+      <g opacity="0.95">
+        <rect x="12" y="12" width="18" height="18" fill="#93c5fd"/>
+        <rect x="32" y="12" width="18" height="18" fill="#60a5fa"/>
+        <rect x="52" y="12" width="18" height="18" fill="#3b82f6"/>
+        <rect x="72" y="12" width="18" height="18" fill="#2563eb"/>
+        <rect x="92" y="12" width="18" height="18" fill="#1d4ed8"/>
+        <rect x="112" y="12" width="18" height="18" fill="#60a5fa"/>
+        <rect x="132" y="12" width="18" height="18" fill="#93c5fd"/>
+        <rect x="152" y="12" width="18" height="18" fill="#0ea5e9"/>
+
+        <rect x="12" y="32" width="18" height="18" fill="#dbeafe"/>
+        <rect x="32" y="32" width="18" height="18" fill="#bfdbfe"/>
+        <rect x="52" y="32" width="18" height="18" fill="#93c5fd"/>
+        <rect x="72" y="32" width="18" height="18" fill="#60a5fa"/>
+        <rect x="92" y="32" width="18" height="18" fill="#3b82f6"/>
+        <rect x="112" y="32" width="18" height="18" fill="#60a5fa"/>
+        <rect x="132" y="32" width="18" height="18" fill="#93c5fd"/>
+        <rect x="152" y="32" width="18" height="18" fill="#0ea5e9"/>
+
+        <rect x="12" y="52" width="18" height="18" fill="#1e293b"/>
+        <rect x="32" y="52" width="18" height="18" fill="#334155"/>
+        <rect x="52" y="52" width="18" height="18" fill="#475569"/>
+        <rect x="72" y="52" width="18" height="18" fill="#64748b"/>
+        <rect x="92" y="52" width="18" height="18" fill="#94a3b8"/>
+        <rect x="112" y="52" width="18" height="18" fill="#64748b"/>
+        <rect x="132" y="52" width="18" height="18" fill="#475569"/>
+        <rect x="152" y="52" width="18" height="18" fill="#334155"/>
+
+        <rect x="12" y="72" width="18" height="18" fill="#1e293b"/>
+        <rect x="32" y="72" width="18" height="18" fill="#334155"/>
+        <rect x="52" y="72" width="18" height="18" fill="#475569"/>
+        <rect x="72" y="72" width="18" height="18" fill="#64748b"/>
+        <rect x="92" y="72" width="18" height="18" fill="#94a3b8"/>
+        <rect x="112" y="72" width="18" height="18" fill="#64748b"/>
+        <rect x="132" y="72" width="18" height="18" fill="#475569"/>
+        <rect x="152" y="72" width="18" height="18" fill="#334155"/>
+      </g>
+    </g>
+    <text x="108" y="224" text-anchor="middle" class="mono">W</text>
+  </g>
+
+  <line x1="325" y1="350" x2="390" y2="350" stroke="#e5e7eb" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="332" y="324" class="chip">basis change</text>
+
+  <!-- 2: rotor / scale -->
+  <g transform="translate(419,214)">
+    <rect x="0" y="0" width="216" height="240" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="108" y="22" text-anchor="middle" class="small">Transform before quantization</text>
+
+    <circle cx="72" cy="96" r="42" fill="#0f172a" stroke="#22c55e" stroke-width="3"/>
+    <path d="M72 54 A42 42 0 0 1 104 84" stroke="#22c55e" stroke-width="4" fill="none" marker-end="url(#arrow)"/>
+    <text x="72" y="102" text-anchor="middle" class="label" fill="#dcfce7">R</text>
+    <text x="72" y="124" text-anchor="middle" class="tiny">rotor</text>
+
+    <rect x="124" y="60" width="60" height="36" rx="10" fill="#14532d" stroke="#22c55e" stroke-width="1.5"/>
+    <text x="154" y="83" text-anchor="middle" class="mono">scale</text>
+    <rect x="124" y="110" width="60" height="36" rx="10" fill="#1d4ed8" stroke="#93c5fd" stroke-width="1.5"/>
+    <text x="154" y="133" text-anchor="middle" class="mono">balance</text>
+
+    <text x="108" y="188" text-anchor="middle" class="small">Goal: reduce outliers / improve alignment</text>
+    <text x="108" y="216" text-anchor="middle" class="mono">W' = W · Rᵀ · S</text>
+  </g>
+
+  <line x1="660" y1="350" x2="725" y2="350" stroke="#e5e7eb" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="667" y="324" class="chip">quantize</text>
+
+  <!-- 3: quantize -->
+  <g transform="translate(754,214)">
+    <rect x="0" y="0" width="216" height="240" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="108" y="22" text-anchor="middle" class="small">Convert to low-bit codes</text>
+
+    <!-- blocks -->
+    <rect x="20" y="48" width="82" height="52" rx="12" fill="url(#qgrad)"/>
+    <rect x="114" y="48" width="82" height="52" rx="12" fill="url(#qgrad)"/>
+    <rect x="20" y="112" width="82" height="52" rx="12" fill="url(#qgrad)"/>
+    <rect x="114" y="112" width="82" height="52" rx="12" fill="url(#qgrad)"/>
+    <text x="61" y="78" text-anchor="middle" class="label" fill="#eff6ff">Q</text>
+    <text x="155" y="78" text-anchor="middle" class="label" fill="#eff6ff">Q</text>
+    <text x="61" y="142" text-anchor="middle" class="label" fill="#eff6ff">Q</text>
+    <text x="155" y="142" text-anchor="middle" class="label" fill="#eff6ff">Q</text>
+
+    <text x="108" y="196" text-anchor="middle" class="small">k-quants: block / super-block metadata</text>
+    <text x="108" y="218" text-anchor="middle" class="small">i-quants: importance-aware allocation</text>
+  </g>
+
+  <line x1="995" y1="350" x2="1060" y2="350" stroke="#e5e7eb" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="1003" y="324" class="chip">pack</text>
+
+  <!-- 4: pack -->
+  <g transform="translate(1089,214)">
+    <rect x="0" y="0" width="216" height="240" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="108" y="22" text-anchor="middle" class="small">Pack bytes for storage</text>
+    <rect x="24" y="46" width="168" height="146" rx="16" fill="url(#packGrad)"/>
+    <text x="108" y="82" text-anchor="middle" class="label" fill="#fff7ed">GGUF</text>
+    <text x="108" y="108" text-anchor="middle" class="small" fill="#fff7ed">packed blocks</text>
+    <text x="108" y="132" text-anchor="middle" class="tiny" fill="#fff7ed">scales + codes + metadata</text>
+    <text x="108" y="156" text-anchor="middle" class="tiny" fill="#fff7ed">smaller on disk / in memory</text>
+    <text x="108" y="196" text-anchor="middle" class="mono">store compactly</text>
+  </g>
+
+  <line x1="1325" y1="350" x2="1395" y2="350" stroke="#e5e7eb" stroke-width="4" marker-end="url(#arrow)"/>
+  <text x="1334" y="324" class="chip">reconstruct locally</text>
+
+  <!-- 5: inference -->
+  <g transform="translate(1400,214)">
+    <rect x="0" y="0" width="80" height="240" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="40" y="22" text-anchor="middle" class="small">Infer</text>
+
+    <rect x="14" y="48" width="52" height="40" rx="10" fill="url(#inferGrad)"/>
+    <text x="40" y="73" text-anchor="middle" class="mono">deq</text>
+    <rect x="14" y="98" width="52" height="40" rx="10" fill="url(#inferGrad)"/>
+    <text x="40" y="123" text-anchor="middle" class="mono">matmul</text>
+    <rect x="14" y="148" width="52" height="40" rx="10" fill="url(#inferGrad)"/>
+    <text x="40" y="173" text-anchor="middle" class="mono">drop</text>
+    <text x="40" y="212" text-anchor="middle" class="tiny">temporary reconstruction</text>
+  </g>
+
+  <!-- bottom explanation -->
+  <g filter="url(#shadow)">
+    <rect x="60" y="620" width="1420" height="170" rx="18" fill="#0b1220" stroke="#334155" stroke-width="1.5"/>
+    <text x="86" y="655" class="label">How to read it</text>
+    <text x="86" y="684" class="small">JPEG does transform → quantize → pack. For model weights, the rotor or scaling step is the transform, GGUF k-quants / i-quants are the quantizers, and inference reconstructs only the current block locally inside the kernel.</text>
+    <text x="86" y="715" class="small">k-quants emphasize block/super-block metadata efficiency. i-quants add importance-aware allocation. Both improve storage quality tradeoffs, but neither changes the core inference math: low-bit codes are dequantized on demand for the matmul.</text>
+    <text x="86" y="748" class="small">If you want the weight-compression analogue of JPEG, think: choose a good basis, quantize locally, pack efficiently, reconstruct just in time.</text>
+  </g>
+</svg>
