@@ -44,7 +44,7 @@ The experimental branches in `gaptq/experimental/` are exploratory and should be
 The projection-residual experiment is now treated as an archived negative result: it can reduce local error, but it does not reliably improve perplexity.
 The reflection baseline is also archived as a negative result: it is cheap and locally stable, but it does not improve perplexity on the benchmark models.
 The next live subspace experiment is no longer the low-rank residual model. The data show that branch is a dead end as written.
-Grade allocation on projection-heavy layers is the current live subspace candidate. The broad `(?:attn|mlp)\.c_proj$` slice improved `gpt2-medium` modestly, but it did not transfer cleanly to `gpt2` or to an attention-only slice, so it remains promising but unproven.
+Grade allocation on `mlp.c_proj` is the current live subspace candidate. The broader `(?:attn|mlp)\.c_proj$` slice was superseded by the MLP-only slice, and the attention-only slice was rejected.
 
 ## Benchmark Snapshot
 
@@ -70,4 +70,4 @@ Results from the cleaned core benchmark:
 - The Householder reflection branch is archived unless a new objective makes it worthwhile.
 - The experimental branches are not part of the core claim and should not be read as validated methods.
 - Activation quantization, per-grade quantization, and ensemble quantization remain exploratory.
-- Grade allocation is the current live subspace candidate, but the evidence is mixed and model-dependent.
+- Grade allocation is the current live subspace candidate, but the evidence is still mixed and model-dependent even after narrowing to `mlp.c_proj`.

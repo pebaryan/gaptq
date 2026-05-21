@@ -105,7 +105,7 @@ Then move to compression:
 
 1. Rotor only.
 2. Rotor plus scaling.
-3. Grade-aware bit allocation on the projection-heavy layers.
+3. Grade-aware bit allocation on `mlp.c_proj`.
 4. Projection plus explicit residual modeling only if the objective changes materially.
 
 ## 4.1 First executable checklist
@@ -192,10 +192,10 @@ That means the next GA work should move toward either:
 
 ### Grade-allocation status
 
-The current live candidate is grade-aware allocation on projection-heavy layers.
-The broad `(?:attn|mlp)\.c_proj$` slice is the most promising one so far. An
-attention-only slice regressed, so this should be treated as a geometry-guided
-allocation study, not as a blanket replacement for rotor-only quantization.
+The current live candidate is grade-aware allocation on `mlp.c_proj`.
+The broader `(?:attn|mlp)\.c_proj$` slice is now just a comparison point, and an
+attention-only slice regressed. Treat this as a geometry-guided allocation study,
+not as a blanket replacement for rotor-only quantization.
 
 ## 5. What to look for in the data
 

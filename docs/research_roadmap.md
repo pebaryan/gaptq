@@ -57,10 +57,9 @@ Keep it as an archived comparison point. Do not spend further study budget on th
 
 ### Grade-allocation status
 
-The current live subspace candidate is grade-aware allocation on projection-heavy layers.
-The broad `(?:attn|mlp)\.c_proj$` slice improved `gpt2-medium` modestly, but an
-attention-only slice regressed. Treat this as the next active PTQ branch, but not yet
-as a validated method.
+The current live subspace candidate is grade-aware allocation on `mlp.c_proj`.
+The broader `(?:attn|mlp)\.c_proj$` slice is now just a comparison point, and the
+attention-only slice is a rejection.
 
 ## 3. First research hypotheses for rotors
 
@@ -135,7 +134,7 @@ This is the concrete study grid for the next round of work.
 | Learned rotor | Blockwise learned orthogonal preconditioning | Can a learned basis change improve PTQ? |
 | Learned reflection | Householder reflection preconditioning | Archived comparison point; does a cheaper GA transform help? |
 | Learned rotor + scaling | Rotor combined with channel scaling | Does scaling close the gap to stronger PTQ? |
-| Grade allocation | Grade-aware bit allocation on projection-heavy layers | Can geometric structure guide precision allocation better than fixed bit maps? |
+| Grade allocation | Grade-aware bit allocation on `mlp.c_proj` layers | Can geometric structure guide precision allocation better than fixed bit maps? |
 | Projection + residual model | Projection onto a subspace with explicit residual handling | Can subspace splitting be made task-aware enough to matter? |
 
 ### 5.2 Metrics to record
@@ -288,7 +287,7 @@ The next live subspace experiment should instead focus on either:
 
 This is the current live candidate.
 
-Run the broad projection-heavy slice first:
+Run the `mlp.c_proj` slice first:
 
 ```bash
 python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
@@ -301,9 +300,16 @@ Record:
 - whether the gain is concentrated in `c_proj` layers
 - whether an attention-only slice is clearly worse
 
+Then optionally run the broad slice as a comparison point:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
 Pass condition:
-- a broad, geometry-aware grade allocation beats RTN on at least one model without
-  becoming slower or more brittle than the learned rotor path
+- a geometry-aware grade allocation on `mlp.c_proj` beats RTN on at least one model
+  without becoming slower or more brittle than the learned rotor path
 
 ### 6.5 Model-size sensitivity
 

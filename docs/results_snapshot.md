@@ -26,11 +26,23 @@ Source protocol:
 
 ## Grade Allocation
 
-Default live slice used:
+Current live slice:
 
 ```bash
-python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
-python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'mlp\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 'mlp\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
+
+| Model | FP16 PPL | RTN PPL | Grade Allocation PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
+|---|---:|---:|---:|---:|---:|---:|
+| `gpt2` | 61.76 | 94.93 | 88.10 | 61.2% | 12/12 | 0.8s |
+| `gpt2-medium` | 44.17 | 55.19 | 53.43 | 60.3% | 24/24 | 1.8s |
+
+Broad slice used as a comparison point:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
 ```
 
 | Model | FP16 PPL | RTN PPL | Grade Allocation PPL | Mean NMSE gain vs RTN | Layers improved | Runtime |
@@ -54,11 +66,12 @@ python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex 
 
 | Question | Notes |
 |---|---|
+| Did the `mlp.c_proj` slice improve perplexity? | Yes on both models, though the `gpt2` gain is modest. |
 | Did the broad slice improve perplexity? | Yes on `gpt2-medium`, no on `gpt2`. |
 | Did the attention-only slice improve perplexity? | No. It regressed on both models. |
-| Did NMSE improvement predict perplexity? | Only partially. Local gains were real, but they did not transfer cleanly. |
+| Did NMSE improvement predict perplexity? | Only partially. Local gains were real, but they did not transfer perfectly. |
 | Was the transform cheap enough? | Yes. It was much cheaper than the rotor-scale or projection branches. |
-| Does this justify more work? | Yes, but only on the broad projection-heavy slice. The attention-only slice is a rejection. |
+| Does this justify more work? | Yes, on the `mlp.c_proj` slice. The attention-only slice is a rejection, and the broad slice is now just a comparison point. |
 
 ## Reflection Baseline
 

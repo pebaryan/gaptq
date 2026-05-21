@@ -1573,7 +1573,7 @@ def main():
                         help="Experimental: learn a Householder reflection before quantization")
     parser.add_argument("--grade-alloc", action="store_true",
                         help="Experimental: calibration-guided grade-aware bit allocation")
-    parser.add_argument("--grade-alloc-regex", type=str, default=r"(?:attn|mlp)\.c_proj$",
+    parser.add_argument("--grade-alloc-regex", type=str, default=r"mlp\.c_proj$",
                         help="Regex for layers eligible for grade-aware allocation")
     parser.add_argument("--grade-bit-cost", type=float, default=1e-3,
                         help="Penalty weight for larger average bit maps in grade allocation")

@@ -78,7 +78,7 @@ Record:
 
 This is the current live subspace candidate.
 
-Run the broad projection-heavy slice first:
+Run the `mlp.c_proj` slice first:
 
 ```bash
 python -m gaptq.quantize_model --experimental --grade-alloc --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
@@ -90,6 +90,13 @@ Record:
 - whether the gain survives on `gpt2-medium`
 - whether the effect is concentrated in `c_proj` layers
 - whether an attention-only slice is clearly worse
+
+Then optionally run the broad slice as a comparison point:
+
+```bash
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2 --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+python -m gaptq.quantize_model --experimental --grade-alloc --grade-alloc-regex '(?:attn|mlp)\.c_proj$' --model gpt2-medium --n-bits 4 --n-steps 2 --n-restarts 1 --eval-batches 50 --batch-size 2 --max-length 64
+```
 
 Then run the attention-only slice as a rejection check:
 
